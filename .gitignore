@@ -1,3 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Virtual envs
+.venv/
+venv/
+
+# Environment files
+.env
+.env.*
+.envrc
+
+# Logs
+*.log
+
+# OS/IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Node / Frontend
+node_modules/
+itinerarytemplate/node_modules/
+itinerarytemplate/.env
+itinerarytemplate/.env.*
+itinerarytemplate/dist/
+itinerarytemplate/build/
+
+# Helper scripts (local only)
+scripts/test_chat.py
+scripts/chat_repl.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
