@@ -3,15 +3,20 @@ requires = ["poetry-core>=1.6.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-name = "kidenomics-backend-wa"
+name = "traverse-backend-wa"
 version = "0.0.0"
 description = "fastapi service"
+package-mode = false
+
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 fastapi = ">=0.110"
 uvicorn = {extras = ["standard"], version = ">=0.29"}
 pydantic = ">=2.5"
+python-dotenv = ">=1.0.1"
+aisuite = {extras = ["openai"], version = "^0.1.11"}
+docstring-parser = ">=0.15"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0"
