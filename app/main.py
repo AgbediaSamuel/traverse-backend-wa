@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers.chat import router as chat_router
 from app.api.routers.itineraries import router as itineraries_router
-from app.core.llm_provider import LLMProvider
 from app.core.repository import repo
 from app.core.settings import get_settings
 
@@ -24,8 +23,7 @@ def create_app() -> FastAPI:
     )
 
     # Initialize shared dependencies
-    settings = get_settings()
-    application.state.llm_provider = LLMProvider(model=settings.aisuite_model)
+    _ = get_settings()
     application.state.repo = repo
 
     application.include_router(itineraries_router)

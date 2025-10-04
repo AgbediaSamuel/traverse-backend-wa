@@ -43,6 +43,7 @@ itinerarytemplate/build/
 # Helper scripts (local only)
 scripts/test_chat.py
 scripts/chat_repl.py
+scripts/test_db_connection.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
