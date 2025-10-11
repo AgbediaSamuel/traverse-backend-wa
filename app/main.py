@@ -2,8 +2,11 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers.chat import router as chat_router
+
+# from app.api.routers.chat import router as chat_router  # Temporarily disabled
 from app.api.routers.itineraries import router as itineraries_router
+from app.api.routers.auth import router as auth_router
+from app.api.routers.webhooks import webhook_router, api_webhook_router
 from app.core.repository import repo
 from app.core.settings import get_settings
 
@@ -26,8 +29,11 @@ def create_app() -> FastAPI:
     _ = get_settings()
     application.state.repo = repo
 
+    application.include_router(auth_router)
+    application.include_router(webhook_router)
+    application.include_router(api_webhook_router)  # Add API webhooks route
     application.include_router(itineraries_router)
-    application.include_router(chat_router)
+    # application.include_router(chat_router)  # Temporarily disabled - missing aisuite dependency
     return application
 
 
