@@ -44,6 +44,7 @@ itinerarytemplate/build/
 scripts/test_chat.py
 scripts/chat_repl.py
 scripts/test_db_connection.py
+scripts/google_places_demo.py
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -96,3 +97,5 @@ htmlcov/
 .env.*
 
 
+scripts/google_places_demo.py
+scripts/google_places_demo.py

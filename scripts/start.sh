@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
+PORT="${PORT:-8765}"
 RELOAD="${RELOAD:-true}"
 
 if command -v uvicorn >/dev/null 2>&1; then
