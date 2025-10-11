@@ -1,6 +1,7 @@
-from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, HttpUrl, EmailStr
+from typing import List, Optional
+
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 
 class Activity(BaseModel):
@@ -36,8 +37,10 @@ class ItineraryDocument(BaseModel):
 # User Authentication Schemas
 # =============================================================================
 
+
 class UserBase(BaseModel):
     """Base user model with common fields."""
+
     email: EmailStr
     username: str
     full_name: Optional[str] = None
@@ -45,17 +48,20 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     """Schema for user registration."""
+
     password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
 
 
 class UserLogin(BaseModel):
     """Schema for user login."""
+
     email: EmailStr
     password: str
 
 
 class UserUpdate(BaseModel):
     """Schema for updating user information."""
+
     username: Optional[str] = None
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -65,23 +71,41 @@ class UserUpdate(BaseModel):
 
 class OnboardingUpdate(BaseModel):
     """Schema for updating onboarding status."""
+
     onboarding_completed: Optional[bool] = None
     onboarding_skipped: Optional[bool] = None
 
 
 class UserPreferences(BaseModel):
     """Schema for user travel preferences."""
+
     # Travel style sliders (0-100 values)
-    budget_style: int = Field(50, ge=0, le=100, description="Budget vs Luxury preference (0=Budget, 100=Luxury)")
-    pace_style: int = Field(50, ge=0, le=100, description="Relaxation vs Adventure preference (0=Relaxation, 100=Adventure)")
-    schedule_style: int = Field(50, ge=0, le=100, description="Early Bird vs Night Owl preference (0=Early Bird, 100=Night Owl)")
-    
+    budget_style: int = Field(
+        50, ge=0, le=100, description="Budget vs Luxury preference (0=Budget, 100=Luxury)"
+    )
+    pace_style: int = Field(
+        50,
+        ge=0,
+        le=100,
+        description="Relaxation vs Adventure preference (0=Relaxation, 100=Adventure)",
+    )
+    schedule_style: int = Field(
+        50,
+        ge=0,
+        le=100,
+        description="Early Bird vs Night Owl preference (0=Early Bird, 100=Night Owl)",
+    )
+
     # Selected interests
-    selected_interests: List[str] = Field(default_factory=list, description="List of selected interest sub-items")
-    
+    selected_interests: List[str] = Field(
+        default_factory=list, description="List of selected interest sub-items"
+    )
+
     # Other interests (free text)
-    other_interests: Optional[str] = Field(None, max_length=500, description="Additional interests not covered in categories")
-    
+    other_interests: Optional[str] = Field(
+        None, max_length=500, description="Additional interests not covered in categories"
+    )
+
     # Metadata
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -89,6 +113,7 @@ class UserPreferences(BaseModel):
 
 class UserPreferencesCreate(BaseModel):
     """Schema for creating user preferences."""
+
     budget_style: int = Field(50, ge=0, le=100)
     pace_style: int = Field(50, ge=0, le=100)
     schedule_style: int = Field(50, ge=0, le=100)
@@ -98,6 +123,7 @@ class UserPreferencesCreate(BaseModel):
 
 class ClerkUserSync(BaseModel):
     """Schema for syncing user data from Clerk"""
+
     clerk_user_id: str
     email: EmailStr
     email_verified: bool = False
@@ -110,6 +136,7 @@ class ClerkUserSync(BaseModel):
 
 class User(UserBase):
     """Complete user model returned by API."""
+
     id: str
     clerk_user_id: Optional[str] = None  # Clerk integration
     email_verified: bool = False
@@ -122,13 +149,14 @@ class User(UserBase):
     onboarding_skipped: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 
 
 class UserInDB(User):
     """User model as stored in database (includes hashed password)."""
+
     hashed_password: str
 
 
@@ -136,8 +164,10 @@ class UserInDB(User):
 # Authentication Response Schemas
 # =============================================================================
 
+
 class Token(BaseModel):
     """JWT token response."""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
@@ -145,28 +175,34 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     """Token payload data."""
+
     email: Optional[str] = None
     scopes: List[str] = Field(default_factory=list)
 
 
 class RefreshToken(BaseModel):
     """Refresh token request."""
+
     refresh_token: str
 
 
 class PasswordReset(BaseModel):
     """Password reset request."""
+
     email: EmailStr
 
 
 class PasswordResetConfirm(BaseModel):
     """Password reset confirmation."""
+
     token: str
     new_password: str = Field(..., min_length=8)
+
 
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     email: Optional[str] = None

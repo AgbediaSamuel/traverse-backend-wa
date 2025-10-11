@@ -1,9 +1,10 @@
 import os
 from datetime import datetime, timedelta
 from typing import Optional
+
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from dotenv import load_dotenv
 
 # Load environment variables first
 load_dotenv()
@@ -22,11 +23,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Verify a plain password against a hashed password.
-    
+
     Args:
         plain_password: The plain text password to verify
         hashed_password: The hashed password to compare against
-        
+
     Returns:
         bool: True if password matches, False otherwise
     """
@@ -36,10 +37,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     """
     Hash a password using bcrypt.
-    
+
     Args:
         password: The plain text password to hash
-        
+
     Returns:
         str: The hashed password
     """
@@ -49,11 +50,11 @@ def get_password_hash(password: str) -> str:
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """
     Create a JWT access token.
-    
+
     Args:
         data: The data to encode in the token (typically user info)
         expires_delta: Optional custom expiration time
-        
+
     Returns:
         str: The encoded JWT token
     """
@@ -62,7 +63,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
@@ -71,10 +72,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def verify_token(token: str) -> Optional[str]:
     """
     Verify and decode a JWT token.
-    
+
     Args:
         token: The JWT token to verify
-        
+
     Returns:
         Optional[str]: The email from the token if valid, None otherwise
     """
@@ -91,10 +92,10 @@ def verify_token(token: str) -> Optional[str]:
 def create_refresh_token(data: dict) -> str:
     """
     Create a refresh token with longer expiration.
-    
+
     Args:
         data: The data to encode in the token
-        
+
     Returns:
         str: The encoded refresh token
     """
@@ -108,10 +109,10 @@ def create_refresh_token(data: dict) -> str:
 def verify_refresh_token(token: str) -> Optional[str]:
     """
     Verify a refresh token.
-    
+
     Args:
         token: The refresh token to verify
-        
+
     Returns:
         Optional[str]: The email if valid refresh token, None otherwise
     """

@@ -13,7 +13,7 @@ package-mode = false
 python = ">=3.10,<4.0"
 fastapi = ">=0.110"
 uvicorn = {extras = ["standard"], version = ">=0.29"}
-pydantic = ">=2.5"
+pydantic = {extras = ["email"], version = "^2.12.0"}
 python-dotenv = ">=1.0.1"
 aisuite = {extras = ["openai"], version = "^0.1.11"}
 docstring-parser = ">=0.15"

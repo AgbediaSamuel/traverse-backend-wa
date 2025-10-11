@@ -1,8 +1,15 @@
-from fastapi import APIRouter, HTTPException, status
 from typing import Optional
 
-from app.core.schemas import User, ClerkUserSync, OnboardingUpdate, UserPreferences, UserPreferencesCreate
+from fastapi import APIRouter, HTTPException, status
+
 from app.core.repository import repo
+from app.core.schemas import (
+    ClerkUserSync,
+    OnboardingUpdate,
+    User,
+    UserPreferences,
+    UserPreferencesCreate,
+)
 
 # Create the router
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -12,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 async def create_or_update_user(user_data: ClerkUserSync):
     """
     Create or update user from Clerk data.
-    
+
     Call this endpoint from your NextJS frontend after Clerk authentication
     to store/update the user in your MongoDB database.
     """
@@ -22,7 +29,7 @@ async def create_or_update_user(user_data: ClerkUserSync):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create/update user: {str(e)}"
+            detail=f"Failed to create/update user: {str(e)}",
         )
 
 
@@ -30,15 +37,12 @@ async def create_or_update_user(user_data: ClerkUserSync):
 async def get_user_by_clerk_id(clerk_user_id: str):
     """
     Get user data by Clerk user ID.
-    
+
     Use this to get user info from your database using the Clerk user ID.
     """
     user = await repo.get_user_by_clerk_id(clerk_user_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
 
 
@@ -49,10 +53,7 @@ async def get_user_by_email(email: str):
     """
     user = await repo.get_user_by_email(email)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
 
 
@@ -64,17 +65,14 @@ async def delete_user(clerk_user_id: str):
     try:
         result = repo.users_collection.delete_one({"clerk_user_id": clerk_user_id})
         if result.deleted_count == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         return {"message": "User deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {str(e)}"
+            detail=f"Failed to delete user: {str(e)}",
         )
 
 
@@ -82,27 +80,24 @@ async def delete_user(clerk_user_id: str):
 async def update_user_onboarding(clerk_user_id: str, onboarding_data: OnboardingUpdate):
     """
     Update user onboarding status.
-    
+
     Use this to mark onboarding as completed or skipped.
     """
     try:
         user = await repo.update_user_onboarding(
             clerk_user_id=clerk_user_id,
             onboarding_completed=onboarding_data.onboarding_completed,
-            onboarding_skipped=onboarding_data.onboarding_skipped
+            onboarding_skipped=onboarding_data.onboarding_skipped,
         )
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         return user
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update onboarding status: {str(e)}"
+            detail=f"Failed to update onboarding status: {str(e)}",
         )
 
 
@@ -110,18 +105,15 @@ async def update_user_onboarding(clerk_user_id: str, onboarding_data: Onboarding
 async def save_user_preferences(clerk_user_id: str, preferences: UserPreferencesCreate):
     """
     Save user travel preferences.
-    
+
     Use this to store user preferences from the onboarding form.
     """
     try:
         # Verify user exists
         user = await repo.get_user_by_clerk_id(clerk_user_id)
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
         # Save preferences
         saved_preferences = await repo.save_user_preferences(clerk_user_id, preferences)
         return saved_preferences
@@ -130,7 +122,7 @@ async def save_user_preferences(clerk_user_id: str, preferences: UserPreferences
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save preferences: {str(e)}"
+            detail=f"Failed to save preferences: {str(e)}",
         )
 
 
@@ -143,8 +135,7 @@ async def get_user_preferences(clerk_user_id: str):
         preferences = await repo.get_user_preferences(clerk_user_id)
         if not preferences:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User preferences not found"
+                status_code=status.HTTP_404_NOT_FOUND, detail="User preferences not found"
             )
         return preferences
     except HTTPException:
@@ -152,7 +143,7 @@ async def get_user_preferences(clerk_user_id: str):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get preferences: {str(e)}"
+            detail=f"Failed to get preferences: {str(e)}",
         )
 
 
@@ -168,8 +159,7 @@ async def test_auth_endpoint():
             "PATCH /auth/users/{clerk_user_id}/onboarding": "Update onboarding status",
             "POST /auth/users/{clerk_user_id}/preferences": "Save user preferences",
             "GET /auth/users/{clerk_user_id}/preferences": "Get user preferences",
-            "DELETE /auth/users/{clerk_user_id}": "Delete user"
+            "DELETE /auth/users/{clerk_user_id}": "Delete user",
         },
-        "usage": "Call POST /auth/users from your NextJS frontend after Clerk auth"
+        "usage": "Call POST /auth/users from your NextJS frontend after Clerk auth",
     }
-

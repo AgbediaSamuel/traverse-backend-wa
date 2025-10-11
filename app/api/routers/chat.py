@@ -111,7 +111,7 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
                     # Add follow-up message with itinerary link
                     follow_up = ChatMessage(
                         role="assistant",
-                        content=f"✅ Your itinerary has been generated! View it at: http://localhost:8000/itineraries/{itinerary_id}",
+                        content=f"Your itinerary has been generated. View it at: http://localhost:8000/itineraries/{itinerary_id}",
                     )
                     session.messages.append(follow_up)
         except Exception as e:

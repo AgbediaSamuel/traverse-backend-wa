@@ -6,11 +6,20 @@ import uuid
 from datetime import datetime
 from typing import Dict, Optional
 
-from pymongo import MongoClient
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
-from app.core.schemas import ItineraryDocument, User, UserCreate, UserInDB, ClerkUserSync, OnboardingUpdate, UserPreferences, UserPreferencesCreate
 from app.core.auth import get_password_hash, verify_password
+from app.core.schemas import (
+    ClerkUserSync,
+    ItineraryDocument,
+    OnboardingUpdate,
+    User,
+    UserCreate,
+    UserInDB,
+    UserPreferences,
+    UserPreferencesCreate,
+)
 
 # Load environment variables
 load_dotenv()
@@ -20,40 +29,42 @@ class MongoDBRepo:
     def __init__(self):
         # Load environment variables
         load_dotenv()
-        
+
         # MongoDB connection
         mongodb_uri = os.getenv("MONGODB_URI")
         database_name = os.getenv("DATABASE_NAME", "traverse_db")
-        
+
         if not mongodb_uri:
             raise ValueError("MONGODB_URI environment variable is required")
-        
+
         # Initialize MongoDB client with alternative connection settings
         self.client = MongoClient(mongodb_uri)
-        
+
         self.db = self.client[database_name]
-        
+
         # Collections
         self.itineraries_collection = self.db.itineraries
         self.users_collection = self.db.users
+        self.sessions_collection = self.db.sessions
         self.preferences_collection = self.db.user_preferences
-        
+
         # Test connection and create indexes only if connection works
         try:
             # Test the connection
-            self.client.admin.command('ping')
-            print("✅ MongoDB connection successful!")
-            
+            self.client.admin.command("ping")
+            print("MongoDB connection successful")
+
             # Create indexes for better performance (only if connection works)
             try:
                 self.users_collection.create_index("email", unique=True)
-                print("✅ Database indexes created")
+                self.sessions_collection.create_index("id", unique=True)
+                print("Database indexes created")
             except Exception as index_error:
-                print(f"⚠️ Index creation failed (might already exist): {index_error}")
-                
+                print(f"Index creation failed (might already exist): {index_error}")
+
         except Exception as e:
-            print(f"❌ MongoDB connection failed: {e}")
-            print("⚠️ Will continue without database connection (for development)")
+            print(f"MongoDB connection failed: {e}")
+            print("Will continue without database connection (for development)")
 
     # Sessions
     def create_session(self, session: dict) -> None:
@@ -67,10 +78,7 @@ class MongoDBRepo:
         return session_doc
 
     def update_session(self, session_id: str, data: dict) -> None:
-        self.sessions_collection.update_one(
-            {"id": session_id},
-            {"$set": data}
-        )
+        self.sessions_collection.update_one({"id": session_id}, {"$set": data})
 
     # Itineraries
     def save_itinerary(self, doc: ItineraryDocument, session_id: str | None = None) -> str:
@@ -96,7 +104,7 @@ class MongoDBRepo:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         hashed_password = get_password_hash(user_data.password)
         now = datetime.utcnow()
-        
+
         user_doc = {
             "id": user_id,
             "email": user_data.email,
@@ -108,17 +116,17 @@ class MongoDBRepo:
             "created_at": now,
             "updated_at": now,
         }
-        
+
         try:
             self.users_collection.insert_one(user_doc)
         except Exception as e:
             if "duplicate key" in str(e).lower():
                 raise ValueError("User with this email already exists")
             raise e
-        
+
         # Return User model (without hashed_password)
         return User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
-    
+
     async def get_user_by_email(self, email: str) -> Optional[User]:
         """Get user by email from MongoDB."""
         user_doc = self.users_collection.find_one({"email": email})
@@ -127,7 +135,7 @@ class MongoDBRepo:
             # Return User model (without hashed_password)
             return User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
         return None
-    
+
     def get_user_by_email_sync(self, email: str) -> Optional[User]:
         """Synchronous version for optional auth dependency."""
         user_doc = self.users_collection.find_one({"email": email})
@@ -135,7 +143,7 @@ class MongoDBRepo:
             user_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
         return None
-    
+
     async def get_user_in_db(self, email: str) -> Optional[UserInDB]:
         """Get complete user including hashed password (for authentication)."""
         user_doc = self.users_collection.find_one({"email": email})
@@ -149,10 +157,10 @@ class MongoDBRepo:
         user_in_db = await self.get_user_in_db(email)
         if not user_in_db:
             return None
-        
+
         if not verify_password(password, user_in_db.hashed_password):
             return None
-        
+
         # Return User model (without hashed_password)
         return User(**{k: v for k, v in user_in_db.model_dump().items() if k != "hashed_password"})
 
@@ -161,15 +169,12 @@ class MongoDBRepo:
         """Sync or create user from Clerk data."""
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         now = datetime.utcnow()
-        
+
         # Check if user already exists by clerk_user_id or email
-        existing_user = self.users_collection.find_one({
-            "$or": [
-                {"clerk_user_id": clerk_data.clerk_user_id},
-                {"email": clerk_data.email}
-            ]
-        })
-        
+        existing_user = self.users_collection.find_one(
+            {"$or": [{"clerk_user_id": clerk_data.clerk_user_id}, {"email": clerk_data.email}]}
+        )
+
         if existing_user:
             # Update existing user with latest Clerk data
             update_data = {
@@ -181,28 +186,25 @@ class MongoDBRepo:
                 "image_url": clerk_data.image_url,
                 "updated_at": now,
             }
-            
+
             # Update username only if it's provided and not already set
             if clerk_data.username and not existing_user.get("username"):
                 update_data["username"] = clerk_data.username
-            
+
             # Ensure onboarding fields exist for existing users (migration)
             if "onboarding_completed" not in existing_user:
                 update_data["onboarding_completed"] = False
             if "onboarding_skipped" not in existing_user:
                 update_data["onboarding_skipped"] = False
-            
-            self.users_collection.update_one(
-                {"_id": existing_user["_id"]},
-                {"$set": update_data}
-            )
-            
+
+            self.users_collection.update_one({"_id": existing_user["_id"]}, {"$set": update_data})
+
             # Return updated user
             updated_user = self.users_collection.find_one({"_id": existing_user["_id"]})
             updated_user.pop("_id", None)
             updated_user.pop("hashed_password", None)  # Remove if present
             return User(**updated_user)
-        
+
         else:
             # Create new user from Clerk data
             user_doc = {
@@ -210,7 +212,8 @@ class MongoDBRepo:
                 "clerk_user_id": clerk_data.clerk_user_id,
                 "email": clerk_data.email,
                 "email_verified": clerk_data.email_verified,
-                "username": clerk_data.username or f"user_{user_id[-8:]}",  # Generate username if not provided
+                "username": clerk_data.username
+                or f"user_{user_id[-8:]}",  # Generate username if not provided
                 "first_name": clerk_data.first_name,
                 "last_name": clerk_data.last_name,
                 "full_name": clerk_data.full_name,
@@ -218,11 +221,11 @@ class MongoDBRepo:
                 "is_active": True,
                 "scopes": ["user"],
                 "onboarding_completed": False,  # New users haven't completed onboarding
-                "onboarding_skipped": False,    # New users haven't skipped onboarding
+                "onboarding_skipped": False,  # New users haven't skipped onboarding
                 "created_at": now,
                 "updated_at": now,
             }
-            
+
             result = self.users_collection.insert_one(user_doc)
             if result.inserted_id:
                 user_doc.pop("_id", None)  # Remove MongoDB ObjectId
@@ -236,40 +239,43 @@ class MongoDBRepo:
         if user_doc:
             user_doc.pop("_id", None)  # Remove MongoDB ObjectId
             user_doc.pop("hashed_password", None)  # Remove if present
-            
+
             # Ensure onboarding fields exist (migration for existing users)
             if "onboarding_completed" not in user_doc:
                 user_doc["onboarding_completed"] = False
             if "onboarding_skipped" not in user_doc:
                 user_doc["onboarding_skipped"] = False
-            
+
             print(user_doc)
             return User(**user_doc)
         return None
 
-    async def update_user_onboarding(self, clerk_user_id: str, onboarding_completed: bool = None, onboarding_skipped: bool = None) -> Optional[User]:
+    async def update_user_onboarding(
+        self, clerk_user_id: str, onboarding_completed: bool = None, onboarding_skipped: bool = None
+    ) -> Optional[User]:
         """Update user onboarding status."""
         update_data = {"updated_at": datetime.utcnow()}
-        
+
         if onboarding_completed is not None:
             update_data["onboarding_completed"] = onboarding_completed
-        
+
         if onboarding_skipped is not None:
             update_data["onboarding_skipped"] = onboarding_skipped
-        
+
         result = self.users_collection.update_one(
-            {"clerk_user_id": clerk_user_id},
-            {"$set": update_data}
+            {"clerk_user_id": clerk_user_id}, {"$set": update_data}
         )
-        
+
         if result.modified_count > 0:
             return await self.get_user_by_clerk_id(clerk_user_id)
         return None
 
-    async def save_user_preferences(self, clerk_user_id: str, preferences_data: UserPreferencesCreate) -> UserPreferences:
+    async def save_user_preferences(
+        self, clerk_user_id: str, preferences_data: UserPreferencesCreate
+    ) -> UserPreferences:
         """Save or update user travel preferences."""
         now = datetime.utcnow()
-        
+
         # Create preferences document
         preferences_doc = {
             "clerk_user_id": clerk_user_id,
@@ -281,14 +287,12 @@ class MongoDBRepo:
             "created_at": now,
             "updated_at": now,
         }
-        
+
         # Upsert (update if exists, insert if not)
         result = self.preferences_collection.update_one(
-            {"clerk_user_id": clerk_user_id},
-            {"$set": preferences_doc},
-            upsert=True
+            {"clerk_user_id": clerk_user_id}, {"$set": preferences_doc}, upsert=True
         )
-        
+
         # Return the saved preferences
         saved_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
         if saved_doc:
