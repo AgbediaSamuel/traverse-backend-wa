@@ -93,7 +93,7 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
 
             async with httpx.AsyncClient(timeout=45) as client:
                 resp = await client.post(
-                    "http://localhost:8000/itineraries/generate",
+                    "http://localhost:8765/itineraries/generate",
                     json=payload,
                 )
                 resp.raise_for_status()
@@ -111,7 +111,7 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
                     # Add follow-up message with itinerary link
                     follow_up = ChatMessage(
                         role="assistant",
-                        content=f"Your itinerary has been generated. View it at: http://localhost:8000/itineraries/{itinerary_id}",
+                        content=f"✅ Your itinerary has been generated! View it at: http://localhost:5174/?itineraryId={itinerary_id}",
                     )
                     session.messages.append(follow_up)
         except Exception as e:
@@ -131,7 +131,7 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
     if itinerary_generated and session.conversation_state.itinerary_id:
         result["itinerary_id"] = session.conversation_state.itinerary_id
         result["itinerary_url"] = (
-            f"http://localhost:8000/itineraries/{session.conversation_state.itinerary_id}"
+            f"http://localhost:5174/?itineraryId={session.conversation_state.itinerary_id}"
         )
 
     return result
@@ -165,7 +165,7 @@ async def finalize(session_id: str, request: Request) -> Dict[str, object]:
 
         async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.post(
-                "http://localhost:8000/itineraries/generate",
+                "http://localhost:8765/itineraries/generate",
                 json=payload,
             )
             resp.raise_for_status()
