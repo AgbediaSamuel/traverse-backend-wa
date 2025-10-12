@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
+from app.core.conversation_manager import ConversationManager, ConversationState
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-
-from app.core.conversation_manager import ConversationManager, ConversationState
 
 
 class ChatMessage(BaseModel):
@@ -34,8 +34,42 @@ _SESSIONS: Dict[str, ChatSession] = {}
 _conversation_manager = ConversationManager()
 
 
+@router.get("/sessions/active")
+def get_active_session(clerk_user_id: str, request: Request) -> Dict[str, object]:
+    """
+    Get or create the active chat session for a user.
+    This ensures each user only has one active session at a time.
+    """
+    # Get from database
+    db_session = request.app.state.repo.get_active_session(clerk_user_id)
+
+    # Initialize in-memory session if not already loaded
+    if db_session["id"] not in _SESSIONS:
+        # Reconstruct conversation state from database
+        state_dict = db_session.get("conversation_state", {})
+        conversation_state = (
+            ConversationState(**state_dict) if state_dict else ConversationState()
+        )
+
+        # Reconstruct messages
+        messages = [ChatMessage(**msg) for msg in db_session.get("messages", [])]
+
+        session = ChatSession(
+            id=db_session["id"],
+            user_id=clerk_user_id,
+            messages=messages,
+            conversation_state=conversation_state,
+        )
+        _SESSIONS[db_session["id"]] = session
+
+    return {"session": _SESSIONS[db_session["id"]]}
+
+
 @router.post("/sessions")
-def create_session(user_id: Optional[str] = None, request: Request = None) -> Dict[str, str]:
+def create_session(
+    user_id: Optional[str] = None, request: Request = None
+) -> Dict[str, str]:
+    """Legacy endpoint - deprecated in favor of /sessions/active"""
     sid = f"sess_{uuid.uuid4().hex[:12]}"
     session = ChatSession(id=sid, user_id=user_id)
     _SESSIONS[sid] = session
@@ -51,8 +85,26 @@ def get_session(session_id: str, request: Request) -> Dict[str, object]:
     return {"session": session}
 
 
+@router.delete("/sessions/{session_id}")
+def delete_session(session_id: str, request: Request) -> Dict[str, str]:
+    """Delete a session from memory and database."""
+    # Remove from memory
+    if session_id in _SESSIONS:
+        del _SESSIONS[session_id]
+
+    # Delete from database
+    try:
+        request.app.state.repo.sessions_collection.delete_one({"id": session_id})
+        return {"message": "Session deleted successfully"}
+    except Exception as e:
+        print(f"Error deleting session: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete session")
+
+
 @router.post("/sessions/{session_id}/messages")
-async def post_message(session_id: str, req: MessageRequest, request: Request) -> Dict[str, object]:
+async def post_message(
+    session_id: str, req: MessageRequest, request: Request
+) -> Dict[str, object]:
     session = _SESSIONS.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
@@ -66,11 +118,34 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
         for msg in session.messages[-10:]  # Last 10 messages
     ]
 
+    # Get user context from session
+    user_first_name = None
+    if session.user_id:
+        # Try to get user from database
+        try:
+            user_data = await request.app.state.repo.get_user_by_clerk_id(
+                session.user_id
+            )
+            if user_data:
+                user_first_name = user_data.first_name
+        except Exception as e:
+            print(f"Could not fetch user data: {e}")
+
+    # Get current date and day
+    now = datetime.now()
+    current_date = now.strftime("%Y-%m-%d")
+    current_day = now.strftime("%A")
+
     # Generate response using conversation manager
-    response_text, updated_state, should_generate = _conversation_manager.generate_response(
-        user_message=req.content,
-        state=session.conversation_state,
-        conversation_history=conversation_history[:-1],  # Exclude current message
+    response_text, updated_state, should_generate = (
+        _conversation_manager.generate_response(
+            user_message=req.content,
+            state=session.conversation_state,
+            conversation_history=conversation_history[:-1],  # Exclude current message
+            user_first_name=user_first_name,
+            current_date=current_date,
+            current_day=current_day,
+        )
     )
 
     # Update session state
@@ -79,6 +154,16 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
     # Add assistant response to messages
     assistant_msg = ChatMessage(role="assistant", content=response_text)
     session.messages.append(assistant_msg)
+
+    # Persist messages and state to database
+    request.app.state.repo.update_session(
+        session_id,
+        {
+            "messages": [msg.model_dump() for msg in session.messages],
+            "conversation_state": updated_state.model_dump(),
+            "updated_at": time.time(),
+        },
+    )
 
     # If we should generate itinerary, do it now
     itinerary_generated = False
@@ -102,16 +187,21 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
                 itinerary_id = data.get("id") or data.get("itineraryId")
                 if itinerary_id:
                     session.conversation_state.itinerary_id = itinerary_id
-                    # Update repository session
-                    request.app.state.repo.update_session(
-                        session_id, {"itinerary_id": itinerary_id}
-                    )
+
+                    # Finalize session and create new active one
+                    request.app.state.repo.finalize_session(session_id, itinerary_id)
+
+                    # Clear old session from memory
+                    if session_id in _SESSIONS:
+                        del _SESSIONS[session_id]
+
                     itinerary_generated = True
 
-                    # Add follow-up message with itinerary link
+                    # Add follow-up message with success
+                    destination = updated_state.destination or "your destination"
                     follow_up = ChatMessage(
                         role="assistant",
-                        content=f"✅ Your itinerary has been generated! View it at: http://localhost:5174/?itineraryId={itinerary_id}",
+                        content=f"✅ Perfect! Your itinerary for {destination} has been created! Redirecting you to view your trips...",
                     )
                     session.messages.append(follow_up)
         except Exception as e:
@@ -139,6 +229,12 @@ async def post_message(session_id: str, req: MessageRequest, request: Request) -
 
 @router.post("/sessions/{session_id}/finalize")
 async def finalize(session_id: str, request: Request) -> Dict[str, object]:
+    """
+    Finalize the current session by:
+    1. Generating the itinerary
+    2. Marking the session as finalized
+    3. Creating a new active session for the user
+    """
     session = _SESSIONS.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
@@ -147,11 +243,9 @@ async def finalize(session_id: str, request: Request) -> Dict[str, object]:
     if not session.conversation_state.is_complete():
         missing = session.conversation_state.get_missing_fields()
         return {
-            "message": {
-                "role": "assistant",
-                "content": f"I still need the following information: {', '.join(missing)}. Please provide these details.",
-            },
-            "state": session.conversation_state.model_dump(),
+            "error": True,
+            "message": f"I still need the following information: {', '.join(missing)}. Please provide these details.",
+            "missing_fields": missing,
         }
 
     # Generate itinerary
@@ -172,19 +266,33 @@ async def finalize(session_id: str, request: Request) -> Dict[str, object]:
             data = resp.json()
 
             itinerary_id = data.get("id") or data.get("itineraryId")
-            if itinerary_id:
-                session.conversation_state.itinerary_id = itinerary_id
-                # Update repository session
-                request.app.state.repo.update_session(session_id, {"itinerary_id": itinerary_id})
+            if not itinerary_id:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Itinerary generated but no ID returned",
+                )
 
-                response_text = f"Perfect! Your itinerary has been generated. You can view it using ID: {itinerary_id}"
-            else:
-                response_text = "Your itinerary has been generated successfully!"
+            # Finalize session and create new active one
+            new_session_id = request.app.state.repo.finalize_session(
+                session_id, itinerary_id
+            )
 
-        return {
-            "message": {"role": "assistant", "content": response_text},
-            "state": session.conversation_state.model_dump(),
-        }
+            # Clear old session from memory
+            if session_id in _SESSIONS:
+                del _SESSIONS[session_id]
+
+            itinerary_url = f"http://localhost:5174/?itineraryId={itinerary_id}"
+
+            return {
+                "success": True,
+                "message": "Your itinerary has been created! A new chat session is ready for your next trip.",
+                "itinerary_id": itinerary_id,
+                "itinerary_url": itinerary_url,
+                "new_session_id": new_session_id,
+            }
+
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error generating itinerary: {e}")
         raise HTTPException(

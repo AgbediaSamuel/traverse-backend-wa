@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
-
 from app.core.llm_provider import LLMProvider
 from app.core.settings import get_settings
+from pydantic import BaseModel
 
 
 class ConversationState(BaseModel):
@@ -17,6 +16,9 @@ class ConversationState(BaseModel):
     destination: Optional[str] = None
     dates: Optional[str] = None
     duration: Optional[str] = None
+    trip_for_self: Optional[bool] = (
+        None  # True if trip is for the user, False if for someone else
+    )
 
     # Conversation metadata
     itinerary_id: Optional[str] = None
@@ -29,12 +31,18 @@ class ConversationState(BaseModel):
     def get_missing_fields(self) -> List[str]:
         """Get list of required fields that are still missing."""
         missing = []
-        if not self.traveler_name:
-            missing.append("traveler_name")
         if not self.destination:
             missing.append("destination")
         if not self.dates:
             missing.append("dates")
+        # Only need traveler_name if we don't know who it's for yet
+        if not self.traveler_name:
+            if self.trip_for_self is None:
+                missing.append("trip_for_self")  # Ask who the trip is for first
+            elif self.trip_for_self is False:
+                missing.append(
+                    "traveler_name"
+                )  # It's for someone else, need their name
         return missing
 
 
@@ -60,19 +68,23 @@ class ConversationManager:
                 "\n"
                 "IF the message is 'conversational', return: {}\n"
                 "IF the message is 'informational', extract these fields if present:\n"
-                "- traveler_name (string|null): the traveler's name\n"
+                "- traveler_name (string|null): the traveler's name (only if explicitly mentioned)\n"
                 "- destination (string|null): where they want to go\n"
                 "- dates (string|null): full date range if provided (e.g., 'August 15-20, 2025')\n"
                 "- start_date (string|null): starting date if only start is mentioned (e.g., 'August 15th 2025')\n"
                 "- duration_days (integer|null): number of days if mentioned\n"
                 "- duration (string|null): duration as text (e.g., '5 days', 'one week')\n"
+                "- trip_for_self (boolean|null): detect if trip is for the user themselves\n"
+                "  * true: phrases like 'for me', 'just me', 'myself', 'it's for me', 'I'm going', 'my trip'\n"
+                "  * false: phrases like 'for [someone]', 'planning for my friend', 'it's for someone else', 'booking for'\n"
+                "  * null: if unclear or not mentioned\n"
                 "\n"
                 "Important for dates:\n"
                 "- If user provides a full date range, extract as 'dates'\n"
                 "- If user provides only a start date, extract as 'start_date'\n"
                 "- If user mentions duration, extract both 'duration_days' (number) and 'duration' (text)\n"
                 "\n"
-                "Context helps: If the assistant just asked for the traveler's name and user responds with a single word, that's likely the name.\n"
+                "Context helps: If the assistant just asked whose trip it is and user says 'me' or 'just me', set trip_for_self=true.\n"
                 "If assistant asked for destination and user says a place name, that's the destination, etc.\n"
                 "\n"
                 "Return ONLY a JSON object. No prose, no markdown, no backticks."
@@ -116,9 +128,20 @@ class ConversationManager:
         user_message: str,
         state: ConversationState,
         conversation_history: List[Dict[str, str]],
+        user_first_name: Optional[str] = None,
+        current_date: Optional[str] = None,
+        current_day: Optional[str] = None,
     ) -> tuple[str, ConversationState, bool]:
         """
         Generate an appropriate response based on user message and current state.
+
+        Args:
+            user_message: The user's message
+            state: Current conversation state
+            conversation_history: Previous messages
+            user_first_name: User's first name for personalization
+            current_date: Current date in YYYY-MM-DD format
+            current_day: Current day of week (e.g., "Monday")
 
         Returns:
             tuple of (response_text, updated_state, should_generate_itinerary)
@@ -136,8 +159,21 @@ class ConversationManager:
 
         # Update state with extracted information
         updated_state = state.model_copy(deep=True)
+
+        # Handle trip_for_self
+        if extracted.get("trip_for_self") is not None:
+            updated_state.trip_for_self = extracted["trip_for_self"]
+            # If trip is for user, auto-fill their name
+            if extracted["trip_for_self"] is True and user_first_name:
+                updated_state.traveler_name = user_first_name
+
+        # Handle explicit traveler_name (for someone else)
         if extracted.get("traveler_name"):
             updated_state.traveler_name = extracted["traveler_name"]
+            # If they provided a name, assume it's not for themselves
+            if not updated_state.trip_for_self:
+                updated_state.trip_for_self = False
+
         if extracted.get("destination"):
             updated_state.destination = extracted["destination"]
 
@@ -173,13 +209,16 @@ class ConversationManager:
         should_generate = False
         if is_finalize_request and updated_state.is_complete():
             should_generate = True
-            response = (
-                "Perfect! I have all the information I need. Generating your itinerary now..."
-            )
+            response = "Perfect! I have all the information I need. Generating your itinerary now..."
             return response, updated_state, should_generate
 
         # Build a context-aware prompt for the assistant
-        system_context = self._build_system_context(updated_state)
+        system_context = self._build_system_context(
+            updated_state, user_first_name, current_date, current_day
+        )
+
+        # Check if this is the first message (no history except current message)
+        is_first_message = len(conversation_history) <= 1
 
         # Build conversation history for context
         history_messages = [{"role": "system", "content": system_context}]
@@ -218,11 +257,32 @@ class ConversationManager:
 
             return response, updated_state, should_generate
 
-    def _build_system_context(self, state: ConversationState) -> str:
+    def _build_system_context(
+        self,
+        state: ConversationState,
+        user_first_name: Optional[str] = None,
+        current_date: Optional[str] = None,
+        current_day: Optional[str] = None,
+    ) -> str:
         """Build system context based on current conversation state."""
+        # User context section
+        user_context_parts = []
+        if user_first_name:
+            user_context_parts.append(f"User's name: {user_first_name}")
+        if current_date and current_day:
+            user_context_parts.append(
+                f"Today is: {current_day}, {current_date} (use this to understand relative dates like 'next weekend', 'this Friday', etc.)"
+            )
+
+        user_context = "\n".join(user_context_parts) if user_context_parts else ""
+
         collected = []
         if state.traveler_name:
             collected.append(f"Traveler name: {state.traveler_name}")
+        if state.trip_for_self is not None:
+            collected.append(
+                f"Trip for: {'self' if state.trip_for_self else 'someone else'}"
+            )
         if state.destination:
             collected.append(f"Destination: {state.destination}")
         if state.dates:
@@ -240,15 +300,27 @@ class ConversationManager:
             missing_text = "None - all required information collected"
             next_question = "Ask the user to type 'finalize' to generate the itinerary (make it clear that 'finalize' is the magic word they should use)."
 
-        return f"""You are a helpful travel itinerary planning assistant. Your job is to collect information to create a travel itinerary.
+        user_context_section = (
+            f"User Context:\n{user_context}\n\n" if user_context else ""
+        )
 
-Current information collected:
+        # Add greeting instruction for first message
+        greeting_instruction = ""
+        if len(collected) == 0:  # No information collected yet = first interaction
+            if user_first_name:
+                greeting_instruction = (
+                    f"- Start by greeting {user_first_name} warmly by name\n"
+                )
+
+        context = f"""You are a helpful travel itinerary planning assistant. Your job is to collect information to create a travel itinerary.
+
+{user_context_section}Current information collected:
 {collected_text}
 
 Still needed: {missing_text}
 
 Guidelines:
-- Be friendly, conversational, and concise
+{greeting_instruction}- Be friendly, conversational, and concise
 - Acknowledge any information the user just provided
 - When acknowledging dates and duration together, naturally state them both (e.g., "Lisbon from August 15-20, 2025 for 5 days")
 - This helps the user confirm the dates are correct without explicitly asking
@@ -261,9 +333,12 @@ Guidelines:
 Required fields: traveler_name, destination, dates
 Optional fields: duration"""
 
+        return context
+
     def _get_next_question_for_field(self, field: str) -> str:
         """Get a natural question to ask for a specific field."""
         questions = {
+            "trip_for_self": "Ask if this trip is for them or if they're planning for someone else.",
             "traveler_name": "Ask for the traveler's name in a friendly way.",
             "destination": "Ask where they're traveling to.",
             "dates": "Ask when they're traveling (what dates).",
