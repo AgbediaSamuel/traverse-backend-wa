@@ -1,12 +1,11 @@
 import json
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
-
 from app.core.llm_provider import LLMProvider
 from app.core.repository import repo
 from app.core.schemas import Activity, Day, ItineraryDocument
 from app.core.settings import get_settings
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/itineraries", tags=["itineraries"])
 
@@ -56,7 +55,8 @@ def _parse_itinerary_json_or_502(raw_text: str) -> ItineraryDocument:
             pass
 
     raise HTTPException(
-        status_code=502, detail={"provider_error": "Schema validation failed", "raw": raw_text}
+        status_code=502,
+        detail={"provider_error": "Schema validation failed", "raw": raw_text},
     )
 
 
@@ -80,7 +80,9 @@ def get_sample_itinerary() -> ItineraryDocument:
                         time="12:00 PM",
                         title="Arrival & Check-in",
                         location="Bellagio Hotel & Casino",
-                        description=("Check into the Bellagio suite and enjoy fountain views."),
+                        description=(
+                            "Check into the Bellagio suite and enjoy fountain views."
+                        ),
                         image=(
                             "https://images.unsplash.com/"
                             "photo-1683645012230-e3a3c1255434?crop=entropy&cs=tinysrgb"
@@ -169,6 +171,13 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail={"provider_error": str(exc)})
 
 
+@router.get("/user/{clerk_user_id}")
+def get_user_itineraries(clerk_user_id: str):
+    """Get all itineraries for a specific user."""
+    itineraries = repo.get_user_itineraries(clerk_user_id)
+    return {"itineraries": itineraries}
+
+
 @router.get("/{itinerary_id}")
 def get_itinerary(itinerary_id: str):
     data = repo.get_itinerary(itinerary_id)
@@ -189,3 +198,12 @@ def create_itinerary(doc: ItineraryDocument):
     if not data:
         raise HTTPException(status_code=500, detail="failed to persist itinerary")
     return data
+
+
+@router.delete("/{itinerary_id}")
+def delete_itinerary(itinerary_id: str):
+    """Delete an itinerary by ID."""
+    success = repo.delete_itinerary(itinerary_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Itinerary not found")
+    return {"message": "Itinerary deleted successfully"}

@@ -17,7 +17,10 @@ test_payload = {
     "data": {
         "id": "user_webhook_test_123",
         "email_addresses": [
-            {"email_address": "webhook.test@example.com", "verification": {"status": "verified"}}
+            {
+                "email_address": "webhook.test@example.com",
+                "verification": {"status": "verified"},
+            }
         ],
         "username": "webhooktest",
         "first_name": "Webhook",

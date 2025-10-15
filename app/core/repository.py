@@ -4,22 +4,20 @@ import os
 import time
 import uuid
 from datetime import datetime
-from typing import Dict, Optional
-
-from dotenv import load_dotenv
-from pymongo import MongoClient
+from typing import Optional
 
 from app.core.auth import get_password_hash, verify_password
 from app.core.schemas import (
     ClerkUserSync,
     ItineraryDocument,
-    OnboardingUpdate,
     User,
     UserCreate,
     UserInDB,
     UserPreferences,
     UserPreferencesCreate,
 )
+from dotenv import load_dotenv
+from pymongo import MongoClient
 
 # Load environment variables
 load_dotenv()
@@ -80,8 +78,84 @@ class MongoDBRepo:
     def update_session(self, session_id: str, data: dict) -> None:
         self.sessions_collection.update_one({"id": session_id}, {"$set": data})
 
+    def get_active_session(self, clerk_user_id: str) -> Optional[dict]:
+        """Get the active session for a user, or create one if none exists."""
+        session_doc = self.sessions_collection.find_one(
+            {"clerk_user_id": clerk_user_id, "status": "active"}
+        )
+
+        if session_doc:
+            session_doc.pop("_id", None)
+            return session_doc
+
+        # No active session exists, create one
+        session_id = f"sess_{uuid.uuid4().hex[:12]}"
+        now = datetime.utcnow()
+
+        new_session = {
+            "id": session_id,
+            "clerk_user_id": clerk_user_id,
+            "status": "active",
+            "itinerary_id": None,
+            "messages": [],
+            "conversation_state": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        self.sessions_collection.insert_one(new_session)
+        new_session.pop("_id", None)
+        return new_session
+
+    def finalize_session(self, session_id: str, itinerary_id: str) -> str:
+        """
+        Finalize a session by marking it as finalized and creating a new active session.
+
+        Returns the new active session ID.
+        """
+        # Get the current session
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError("Session not found")
+
+        clerk_user_id = session.get("clerk_user_id")
+        if not clerk_user_id:
+            raise ValueError("Session has no clerk_user_id")
+
+        now = datetime.utcnow()
+
+        # Mark current session as finalized
+        self.sessions_collection.update_one(
+            {"id": session_id},
+            {
+                "$set": {
+                    "status": "finalized",
+                    "itinerary_id": itinerary_id,
+                    "updated_at": now,
+                }
+            },
+        )
+
+        # Create new active session
+        new_session_id = f"sess_{uuid.uuid4().hex[:12]}"
+        new_session = {
+            "id": new_session_id,
+            "clerk_user_id": clerk_user_id,
+            "status": "active",
+            "itinerary_id": None,
+            "messages": [],
+            "conversation_state": {},
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        self.sessions_collection.insert_one(new_session)
+        return new_session_id
+
     # Itineraries
-    def save_itinerary(self, doc: ItineraryDocument, session_id: str | None = None) -> str:
+    def save_itinerary(
+        self, doc: ItineraryDocument, session_id: str | None = None
+    ) -> str:
         itn_id = f"itn_{uuid.uuid4().hex[:12]}"
         itinerary_doc = {
             "id": itn_id,
@@ -97,6 +171,28 @@ class MongoDBRepo:
         if itinerary_doc:
             itinerary_doc.pop("_id", None)  # Remove MongoDB ObjectId
         return itinerary_doc
+
+    def delete_itinerary(self, itinerary_id: str) -> bool:
+        """Delete an itinerary from MongoDB."""
+        result = self.itineraries_collection.delete_one({"id": itinerary_id})
+        return result.deleted_count > 0
+
+    def get_user_itineraries(self, clerk_user_id: str) -> list[dict]:
+        """Get all itineraries for a user by finding their finalized sessions."""
+        # Find all finalized sessions for this user
+        sessions = self.sessions_collection.find(
+            {"clerk_user_id": clerk_user_id, "status": "finalized"},
+            {"itinerary_id": 1, "created_at": 1},
+        ).sort("created_at", -1)
+
+        itineraries = []
+        for session in sessions:
+            if session.get("itinerary_id"):
+                itinerary = self.get_itinerary(session["itinerary_id"])
+                if itinerary:
+                    itineraries.append(itinerary)
+
+        return itineraries
 
     # Users
     async def create_user(self, user_data: UserCreate) -> User:
@@ -162,7 +258,13 @@ class MongoDBRepo:
             return None
 
         # Return User model (without hashed_password)
-        return User(**{k: v for k, v in user_in_db.model_dump().items() if k != "hashed_password"})
+        return User(
+            **{
+                k: v
+                for k, v in user_in_db.model_dump().items()
+                if k != "hashed_password"
+            }
+        )
 
     # Clerk Integration Methods
     async def sync_clerk_user(self, clerk_data: ClerkUserSync) -> User:
@@ -172,7 +274,12 @@ class MongoDBRepo:
 
         # Check if user already exists by clerk_user_id or email
         existing_user = self.users_collection.find_one(
-            {"$or": [{"clerk_user_id": clerk_data.clerk_user_id}, {"email": clerk_data.email}]}
+            {
+                "$or": [
+                    {"clerk_user_id": clerk_data.clerk_user_id},
+                    {"email": clerk_data.email},
+                ]
+            }
         )
 
         if existing_user:
@@ -197,7 +304,9 @@ class MongoDBRepo:
             if "onboarding_skipped" not in existing_user:
                 update_data["onboarding_skipped"] = False
 
-            self.users_collection.update_one({"_id": existing_user["_id"]}, {"$set": update_data})
+            self.users_collection.update_one(
+                {"_id": existing_user["_id"]}, {"$set": update_data}
+            )
 
             # Return updated user
             updated_user = self.users_collection.find_one({"_id": existing_user["_id"]})
@@ -251,7 +360,10 @@ class MongoDBRepo:
         return None
 
     async def update_user_onboarding(
-        self, clerk_user_id: str, onboarding_completed: bool = None, onboarding_skipped: bool = None
+        self,
+        clerk_user_id: str,
+        onboarding_completed: bool = None,
+        onboarding_skipped: bool = None,
     ) -> Optional[User]:
         """Update user onboarding status."""
         update_data = {"updated_at": datetime.utcnow()}
@@ -289,21 +401,27 @@ class MongoDBRepo:
         }
 
         # Upsert (update if exists, insert if not)
-        result = self.preferences_collection.update_one(
+        self.preferences_collection.update_one(
             {"clerk_user_id": clerk_user_id}, {"$set": preferences_doc}, upsert=True
         )
 
         # Return the saved preferences
-        saved_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        saved_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if saved_doc:
             saved_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**saved_doc)
         else:
             raise Exception("Failed to save user preferences")
 
-    async def get_user_preferences(self, clerk_user_id: str) -> Optional[UserPreferences]:
+    async def get_user_preferences(
+        self, clerk_user_id: str
+    ) -> Optional[UserPreferences]:
         """Get user travel preferences by Clerk user ID."""
-        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        preferences_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if preferences_doc:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**preferences_doc)

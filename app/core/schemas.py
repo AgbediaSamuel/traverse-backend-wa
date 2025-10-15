@@ -49,7 +49,9 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
 
-    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
+    password: str = Field(
+        ..., min_length=8, description="Password must be at least 8 characters"
+    )
 
 
 class UserLogin(BaseModel):
@@ -81,7 +83,10 @@ class UserPreferences(BaseModel):
 
     # Travel style sliders (0-100 values)
     budget_style: int = Field(
-        50, ge=0, le=100, description="Budget vs Luxury preference (0=Budget, 100=Luxury)"
+        50,
+        ge=0,
+        le=100,
+        description="Budget vs Luxury preference (0=Budget, 100=Luxury)",
     )
     pace_style: int = Field(
         50,
@@ -103,7 +108,9 @@ class UserPreferences(BaseModel):
 
     # Other interests (free text)
     other_interests: Optional[str] = Field(
-        None, max_length=500, description="Additional interests not covered in categories"
+        None,
+        max_length=500,
+        description="Additional interests not covered in categories",
     )
 
     # Metadata
@@ -199,10 +206,42 @@ class PasswordResetConfirm(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+# =============================================================================
+# Chat Session Schemas
+# =============================================================================
 
 
-class TokenData(BaseModel):
-    email: Optional[str] = None
+class ChatSessionBase(BaseModel):
+    """Base chat session model."""
+
+    clerk_user_id: str
+
+
+class ChatSessionCreate(ChatSessionBase):
+    """Schema for creating a chat session."""
+
+    pass
+
+
+class ChatSessionResponse(BaseModel):
+    """Chat session returned by API."""
+
+    id: str
+    clerk_user_id: str
+    status: str = Field(default="active", pattern="^(active|finalized)$")
+    itinerary_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    messages: List[dict] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class FinalizeSessionResponse(BaseModel):
+    """Response from finalizing a session."""
+
+    message: str
+    itinerary_id: str
+    new_session_id: str
+    itinerary_url: str
