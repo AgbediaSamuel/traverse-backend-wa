@@ -6,10 +6,9 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
+from app.core.conversation_manager import ConversationManager, ConversationState
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-
-from app.core.conversation_manager import ConversationManager, ConversationState
 
 
 class ChatMessage(BaseModel):
@@ -103,7 +102,9 @@ def delete_session(session_id: str, request: Request) -> Dict[str, str]:
 
 
 @router.post("/sessions/{session_id}/messages")
-async def post_message(session_id: str, req: MessageRequest, request: Request) -> Dict[str, object]:
+async def post_message(
+    session_id: str, req: MessageRequest, request: Request
+) -> Dict[str, object]:
     session = _SESSIONS.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session not found")

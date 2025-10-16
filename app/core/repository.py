@@ -19,6 +19,8 @@ from app.core.schemas import (
     UserPreferences,
     UserPreferencesCreate,
 )
+from dotenv import load_dotenv
+from pymongo import MongoClient
 
 # Load environment variables
 load_dotenv()
@@ -284,7 +286,13 @@ class MongoDBRepo:
             return None
 
         # Return User model (without hashed_password)
-        return User(**{k: v for k, v in user_in_db.model_dump().items() if k != "hashed_password"})
+        return User(
+            **{
+                k: v
+                for k, v in user_in_db.model_dump().items()
+                if k != "hashed_password"
+            }
+        )
 
     # Clerk Integration Methods
     async def sync_clerk_user(self, clerk_data: ClerkUserSync) -> User:
@@ -324,7 +332,9 @@ class MongoDBRepo:
             if "onboarding_skipped" not in existing_user:
                 update_data["onboarding_skipped"] = False
 
-            self.users_collection.update_one({"_id": existing_user["_id"]}, {"$set": update_data})
+            self.users_collection.update_one(
+                {"_id": existing_user["_id"]}, {"$set": update_data}
+            )
 
             # Return updated user
             updated_user = self.users_collection.find_one({"_id": existing_user["_id"]})
@@ -424,16 +434,22 @@ class MongoDBRepo:
         )
 
         # Return the saved preferences
-        saved_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        saved_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if saved_doc:
             saved_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**saved_doc)
         else:
             raise Exception("Failed to save user preferences")
 
-    async def get_user_preferences(self, clerk_user_id: str) -> Optional[UserPreferences]:
+    async def get_user_preferences(
+        self, clerk_user_id: str
+    ) -> Optional[UserPreferences]:
         """Get user travel preferences by Clerk user ID."""
-        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        preferences_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if preferences_doc:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**preferences_doc)

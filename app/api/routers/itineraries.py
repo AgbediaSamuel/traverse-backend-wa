@@ -1,13 +1,12 @@
 import json
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
-
 from app.core.llm_provider import LLMProvider
 from app.core.places_service import places_service
 from app.core.repository import repo
 from app.core.schemas import Activity, Day, ItineraryDocument
 from app.core.settings import get_settings
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/itineraries", tags=["itineraries"])
 
@@ -82,7 +81,9 @@ def get_sample_itinerary() -> ItineraryDocument:
                         time="12:00 PM",
                         title="Arrival & Check-in",
                         location="Bellagio Hotel & Casino",
-                        description=("Check into the Bellagio suite and enjoy fountain views."),
+                        description=(
+                            "Check into the Bellagio suite and enjoy fountain views."
+                        ),
                         image=(
                             "https://images.unsplash.com/"
                             "photo-1683645012230-e3a3c1255434?crop=entropy&cs=tinysrgb"
