@@ -14,6 +14,13 @@ class Activity(BaseModel):
     description: Optional[str] = None
     image: Optional[HttpUrl] = None
 
+    # Google Places API enrichment fields (optional)
+    place_id: Optional[str] = Field(None, description="Google Place ID")
+    address: Optional[str] = Field(None, description="Full address")
+    rating: Optional[float] = Field(None, description="Google rating (1-5)")
+    price_level: Optional[int] = Field(None, description="Price level (1-4)")
+    google_maps_url: Optional[str] = Field(None, description="Google Maps link")
+
 
 class Day(BaseModel):
     date: str = Field(
@@ -21,6 +28,17 @@ class Day(BaseModel):
         description="Display date, e.g., 'Friday, March 15'",
     )
     activities: List[Activity] = Field(default_factory=list)
+
+
+class GroupParticipant(BaseModel):
+    first_name: str
+    last_name: str
+
+
+class GroupInfo(BaseModel):
+    invite_id: Optional[str] = None
+    participants: List[GroupParticipant] = Field(default_factory=list)
+    collect_preferences: Optional[bool] = False
 
 
 class ItineraryDocument(BaseModel):
@@ -31,6 +49,11 @@ class ItineraryDocument(BaseModel):
     cover_image: Optional[HttpUrl] = None
     days: List[Day] = Field(default_factory=list)
     notes: List[str] = Field(default_factory=list)
+    # Optional group trip metadata
+    trip_type: Optional[str] = Field(
+        default=None, pattern="^(solo|group)$", description="Type of trip"
+    )
+    group: Optional[GroupInfo] = None
 
 
 # =============================================================================
@@ -49,9 +72,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
 
-    password: str = Field(
-        ..., min_length=8, description="Password must be at least 8 characters"
-    )
+    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
 
 
 class UserLogin(BaseModel):
@@ -215,6 +236,9 @@ class ChatSessionBase(BaseModel):
     """Base chat session model."""
 
     clerk_user_id: str
+    trip_type: Optional[str] = Field(
+        None, pattern="^(solo|group)$", description="Type of trip: solo or group"
+    )
 
 
 class ChatSessionCreate(ChatSessionBase):
@@ -228,6 +252,7 @@ class ChatSessionResponse(BaseModel):
 
     id: str
     clerk_user_id: str
+    trip_type: Optional[str] = Field(None, pattern="^(solo|group)$")
     status: str = Field(default="active", pattern="^(active|finalized)$")
     itinerary_id: Optional[str] = None
     created_at: datetime
@@ -245,3 +270,104 @@ class FinalizeSessionResponse(BaseModel):
     itinerary_id: str
     new_session_id: str
     itinerary_url: str
+
+
+# =============================================================================
+# Calendar & Trip Invite Schemas
+# =============================================================================
+
+
+class InviteParticipantBase(BaseModel):
+    """Base participant model."""
+
+    email: EmailStr
+    first_name: str
+    last_name: str
+
+
+class InviteParticipantCreate(InviteParticipantBase):
+    """Schema for adding a participant to an invite."""
+
+    pass
+
+
+class InviteParticipantUpdate(BaseModel):
+    """Schema for updating a participant."""
+
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
+class InviteParticipantResponse(InviteParticipantBase):
+    """Participant returned by API."""
+
+    is_organizer: bool = Field(
+        default=False, description="Whether this participant is the trip organizer"
+    )
+    status: str = Field(
+        default="pending", pattern="^(pending|invited|responded|preferences_completed)$"
+    )
+    available_dates: Optional[List[str]] = Field(
+        default_factory=list, description="ISO date strings"
+    )
+    has_completed_preferences: bool = Field(
+        default=False, description="Whether participant has completed their preferences"
+    )
+    submitted_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TripInviteBase(BaseModel):
+    """Base trip invite model."""
+
+    trip_name: str = Field(..., max_length=200)
+    destination: Optional[str] = None
+    date_range_start: Optional[str] = Field(None, description="ISO date string")
+    date_range_end: Optional[str] = Field(None, description="ISO date string")
+    collect_preferences: bool = Field(
+        default=False, description="Whether to collect preferences from participants"
+    )
+    trip_type: str = Field(default="group", pattern="^(solo|group)$", description="Type of trip")
+
+
+class TripInviteCreate(TripInviteBase):
+    """Schema for creating a trip invite."""
+
+    pass
+
+
+class TripInviteResponse(TripInviteBase):
+    """Trip invite returned by API."""
+
+    id: str
+    organizer_clerk_id: str
+    organizer_email: str
+    organizer_name: Optional[str] = None
+    status: str = Field(default="draft", pattern="^(draft|sent|finalized)$")
+    collect_preferences: bool = Field(default=False)
+    trip_type: str = Field(default="group")
+    participants: List[InviteParticipantResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CalendarResponseSubmit(BaseModel):
+    """Schema for participant submitting their availability."""
+
+    available_dates: List[str] = Field(
+        ..., description="List of ISO date strings participant is available"
+    )
+
+
+class SendInvitesRequest(BaseModel):
+    """Request to send invites to all participants."""
+
+    message: Optional[str] = Field(
+        None, max_length=500, description="Optional message to include in invite email"
+    )

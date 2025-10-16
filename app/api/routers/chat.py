@@ -6,9 +6,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 import httpx
-from app.core.conversation_manager import ConversationManager, ConversationState
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from app.core.conversation_manager import ConversationManager, ConversationState
 
 
 class ChatMessage(BaseModel):
@@ -20,6 +21,7 @@ class ChatMessage(BaseModel):
 class ChatSession(BaseModel):
     id: str
     user_id: Optional[str] = None
+    trip_type: Optional[str] = Field(None, pattern="^(solo|group)$")
     messages: List[ChatMessage] = Field(default_factory=list)
     conversation_state: ConversationState = Field(default_factory=ConversationState)
 
@@ -35,21 +37,21 @@ _conversation_manager = ConversationManager()
 
 
 @router.get("/sessions/active")
-def get_active_session(clerk_user_id: str, request: Request) -> Dict[str, object]:
+def get_active_session(
+    clerk_user_id: str, trip_type: Optional[str] = None, request: Request = None
+) -> Dict[str, object]:
     """
     Get or create the active chat session for a user.
     This ensures each user only has one active session at a time.
     """
     # Get from database
-    db_session = request.app.state.repo.get_active_session(clerk_user_id)
+    db_session = request.app.state.repo.get_active_session(clerk_user_id, trip_type=trip_type)
 
     # Initialize in-memory session if not already loaded
     if db_session["id"] not in _SESSIONS:
         # Reconstruct conversation state from database
         state_dict = db_session.get("conversation_state", {})
-        conversation_state = (
-            ConversationState(**state_dict) if state_dict else ConversationState()
-        )
+        conversation_state = ConversationState(**state_dict) if state_dict else ConversationState()
 
         # Reconstruct messages
         messages = [ChatMessage(**msg) for msg in db_session.get("messages", [])]
@@ -57,6 +59,7 @@ def get_active_session(clerk_user_id: str, request: Request) -> Dict[str, object
         session = ChatSession(
             id=db_session["id"],
             user_id=clerk_user_id,
+            trip_type=db_session.get("trip_type"),
             messages=messages,
             conversation_state=conversation_state,
         )
@@ -66,9 +69,7 @@ def get_active_session(clerk_user_id: str, request: Request) -> Dict[str, object
 
 
 @router.post("/sessions")
-def create_session(
-    user_id: Optional[str] = None, request: Request = None
-) -> Dict[str, str]:
+def create_session(user_id: Optional[str] = None, request: Request = None) -> Dict[str, str]:
     """Legacy endpoint - deprecated in favor of /sessions/active"""
     sid = f"sess_{uuid.uuid4().hex[:12]}"
     session = ChatSession(id=sid, user_id=user_id)
@@ -102,9 +103,7 @@ def delete_session(session_id: str, request: Request) -> Dict[str, str]:
 
 
 @router.post("/sessions/{session_id}/messages")
-async def post_message(
-    session_id: str, req: MessageRequest, request: Request
-) -> Dict[str, object]:
+async def post_message(session_id: str, req: MessageRequest, request: Request) -> Dict[str, object]:
     session = _SESSIONS.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
@@ -123,9 +122,7 @@ async def post_message(
     if session.user_id:
         # Try to get user from database
         try:
-            user_data = await request.app.state.repo.get_user_by_clerk_id(
-                session.user_id
-            )
+            user_data = await request.app.state.repo.get_user_by_clerk_id(session.user_id)
             if user_data:
                 user_first_name = user_data.first_name
         except Exception as e:
@@ -137,15 +134,13 @@ async def post_message(
     current_day = now.strftime("%A")
 
     # Generate response using conversation manager
-    response_text, updated_state, should_generate = (
-        _conversation_manager.generate_response(
-            user_message=req.content,
-            state=session.conversation_state,
-            conversation_history=conversation_history[:-1],  # Exclude current message
-            user_first_name=user_first_name,
-            current_date=current_date,
-            current_day=current_day,
-        )
+    response_text, updated_state, should_generate = _conversation_manager.generate_response(
+        user_message=req.content,
+        state=session.conversation_state,
+        conversation_history=conversation_history[:-1],  # Exclude current message
+        user_first_name=user_first_name,
+        current_date=current_date,
+        current_day=current_day,
     )
 
     # Update session state
@@ -174,6 +169,7 @@ async def post_message(
                 "destination": updated_state.destination,
                 "dates": updated_state.dates,
                 "duration": updated_state.duration,
+                "clerk_user_id": session.user_id,
             }
 
             async with httpx.AsyncClient(timeout=45) as client:
@@ -273,9 +269,7 @@ async def finalize(session_id: str, request: Request) -> Dict[str, object]:
                 )
 
             # Finalize session and create new active one
-            new_session_id = request.app.state.repo.finalize_session(
-                session_id, itinerary_id
-            )
+            new_session_id = request.app.state.repo.finalize_session(session_id, itinerary_id)
 
             # Clear old session from memory
             if session_id in _SESSIONS:

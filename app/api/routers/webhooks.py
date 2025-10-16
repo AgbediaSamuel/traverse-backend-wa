@@ -13,10 +13,11 @@ import os
 import traceback
 from typing import Any, Dict
 
-from app.core.repository import repo
-from app.core.schemas import ClerkUserSync
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
+
+from app.core.repository import repo
+from app.core.schemas import ClerkUserSync
 
 # Webhook router
 webhook_router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -121,9 +122,7 @@ async def handle_clerk_webhook(request: Request):
     for header_name, header_value in request.headers.items():
         print(f"  {header_name}: {header_value}")
 
-    signature = request.headers.get("svix-signature") or request.headers.get(
-        "webhook-signature"
-    )
+    signature = request.headers.get("svix-signature") or request.headers.get("webhook-signature")
     msg_id = request.headers.get("svix-id")
     timestamp = request.headers.get("svix-timestamp")
 
@@ -162,9 +161,7 @@ async def handle_clerk_webhook(request: Request):
         return Response(content="Webhook processed successfully", status_code=200)
 
     except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload")
     except Exception as e:
         print(f"Webhook processing error: {e}")
         raise HTTPException(

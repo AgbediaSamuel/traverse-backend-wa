@@ -1,10 +1,11 @@
 from typing import Optional
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from app.core.clerk_auth import clerk_auth
 from app.core.repository import repo
 from app.core.schemas import ClerkUserSync, User
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 security = HTTPBearer()
 
@@ -58,9 +59,7 @@ async def get_current_user_from_clerk(
 
 
 async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(
-        HTTPBearer(auto_error=False)
-    ),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
 ) -> Optional[User]:
     """
     Optional dependency to get current user from Clerk JWT token.
@@ -83,9 +82,7 @@ async def get_current_active_user(
     Raises HTTP 400 if user is inactive.
     """
     if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
 
 
