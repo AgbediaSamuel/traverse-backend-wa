@@ -3,10 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
-
 from app.core.llm_provider import LLMProvider
 from app.core.settings import get_settings
+from pydantic import BaseModel
 
 
 class ConversationState(BaseModel):
@@ -17,7 +16,9 @@ class ConversationState(BaseModel):
     destination: Optional[str] = None
     dates: Optional[str] = None
     duration: Optional[str] = None
-    trip_for_self: Optional[bool] = None  # True if trip is for the user, False if for someone else
+    trip_for_self: Optional[bool] = (
+        None  # True if trip is for the user, False if for someone else
+    )
 
     # Conversation metadata
     itinerary_id: Optional[str] = None
@@ -39,7 +40,9 @@ class ConversationState(BaseModel):
             if self.trip_for_self is None:
                 missing.append("trip_for_self")  # Ask who the trip is for first
             elif self.trip_for_self is False:
-                missing.append("traveler_name")  # It's for someone else, need their name
+                missing.append(
+                    "traveler_name"
+                )  # It's for someone else, need their name
         return missing
 
 
@@ -67,9 +70,7 @@ class ConversationManager:
                 "IF the message is 'informational', extract these fields if present:\n"
                 "- traveler_name (string|null): the traveler's name (only if explicitly mentioned)\n"
                 "- destination (string|null): where they want to go\n"
-                "- dates (string|null): full date range if provided (e.g., 'August 15-20, 2025' or 'October 13-15, 2025')\n"
-                "  * IMPORTANT: Always include the year if the user mentions it\n"
-                "  * If no year is mentioned, extract without year (e.g., 'October 13-15')\n"
+                "- dates (string|null): full date range if provided (e.g., 'August 15-20, 2025')\n"
                 "- start_date (string|null): starting date if only start is mentioned (e.g., 'August 15th 2025')\n"
                 "- duration_days (integer|null): number of days if mentioned\n"
                 "- duration (string|null): duration as text (e.g., '5 days', 'one week')\n"
@@ -178,18 +179,7 @@ class ConversationManager:
 
         # Handle dates - either direct dates or start_date
         if extracted.get("dates"):
-            dates_value = extracted["dates"]
-            updated_state.dates = dates_value
-
-            # Check if dates are missing year (for LLM to ask clarification)
-            # This is just for state tracking - the LLM will handle asking
-            import re
-
-            has_year = bool(re.search(r"\b(19|20)\d{2}\b", dates_value))
-            if not has_year:
-                # Store a flag that dates need year clarification
-                # The LLM will see this in the context and ask for clarification
-                updated_state.dates = dates_value  # Keep as-is, LLM will handle
+            updated_state.dates = extracted["dates"]
         elif extracted.get("start_date"):
             # If we have start_date but not full dates, store it
             updated_state.dates = extracted["start_date"]
@@ -219,9 +209,7 @@ class ConversationManager:
         should_generate = False
         if is_finalize_request and updated_state.is_complete():
             should_generate = True
-            response = (
-                "Perfect! I have all the information I need. Generating your itinerary now..."
-            )
+            response = "Perfect! I have all the information I need. Generating your itinerary now..."
             return response, updated_state, should_generate
 
         # Build a context-aware prompt for the assistant
@@ -292,20 +280,13 @@ class ConversationManager:
         if state.traveler_name:
             collected.append(f"Traveler name: {state.traveler_name}")
         if state.trip_for_self is not None:
-            collected.append(f"Trip for: {'self' if state.trip_for_self else 'someone else'}")
+            collected.append(
+                f"Trip for: {'self' if state.trip_for_self else 'someone else'}"
+            )
         if state.destination:
             collected.append(f"Destination: {state.destination}")
         if state.dates:
-            # Check if dates have a year
-            import re
-
-            has_year = bool(re.search(r"\b(19|20)\d{2}\b", state.dates))
-            if has_year:
-                collected.append(f"Dates: {state.dates}")
-            else:
-                collected.append(
-                    f"Dates: {state.dates} (⚠️ YEAR NOT SPECIFIED - ask for clarification)"
-                )
+            collected.append(f"Dates: {state.dates}")
         if state.duration:
             collected.append(f"Duration: {state.duration}")
 
@@ -319,13 +300,17 @@ class ConversationManager:
             missing_text = "None - all required information collected"
             next_question = "Ask the user to type 'finalize' to generate the itinerary (make it clear that 'finalize' is the magic word they should use)."
 
-        user_context_section = f"User Context:\n{user_context}\n\n" if user_context else ""
+        user_context_section = (
+            f"User Context:\n{user_context}\n\n" if user_context else ""
+        )
 
         # Add greeting instruction for first message
         greeting_instruction = ""
         if len(collected) == 0:  # No information collected yet = first interaction
             if user_first_name:
-                greeting_instruction = f"- Start by greeting {user_first_name} warmly by name\n"
+                greeting_instruction = (
+                    f"- Start by greeting {user_first_name} warmly by name\n"
+                )
 
         context = f"""You are a helpful travel itinerary planning assistant. Your job is to collect information to create a travel itinerary.
 
@@ -339,8 +324,6 @@ Guidelines:
 - Acknowledge any information the user just provided
 - When acknowledging dates and duration together, naturally state them both (e.g., "Lisbon from August 15-20, 2025 for 5 days")
 - This helps the user confirm the dates are correct without explicitly asking
-- If dates are provided without a year, ask for clarification (e.g., "Just to confirm, is that October 2025 or 2026?")
-- If dates are ambiguous or incomplete, ask follow-up questions to clarify
 - If information is still missing, naturally ask for the next required field
 - {next_question}
 - Don't repeat information the user already provided unless it's for natural confirmation

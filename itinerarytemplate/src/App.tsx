@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CoverPage } from './components/CoverPage';
 import { DayPage } from './components/DayPage';
 import { NotesPage } from './components/NotesPage';
-import { ParticipantsPage } from './components/ParticipantsPage';
 import { NavigationControls } from './components/NavigationControls';
 import { endpoints } from './config';
 
@@ -12,8 +11,6 @@ const defaultItineraryData = {
   duration: "Three Day Weekend",
   dates: "March 15-17, 2025",
   coverImage: "https://images.unsplash.com/photo-1683645012230-e3a3c1255434?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxsYXMlMjB2ZWdhcyUyMHN0cmlwJTIwc2t5bGluZSUyMG5pZ2h0fGVufDF8fHx8MTc1ODQ0MTc5M3ww&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral",
-  tripType: null,
-  group: null,
   days: [
     {
       dayNumber: 1,
@@ -127,8 +124,6 @@ export default function App() {
         })),
       })),
       notes: doc.notes ?? [],
-      tripType: doc.trip_type ?? null,
-      group: doc.group ?? null,
     };
   }
 
@@ -151,12 +146,7 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
-  const isGroupTrip = data.tripType === 'group';
-  const hasParticipants = Boolean(data.group?.participants && data.group.participants.length > 0);
-  const totalPages = useMemo(() => {
-    // Cover + (Participants if present) + days + notes
-    return 1 + (hasParticipants ? 1 : 0) + data.days.length + 1;
-  }, [data, hasParticipants]);
+  const totalPages = useMemo(() => 1 + data.days.length + 1, [data]); // Cover + days + notes
 
   const handleNext = () => {
     if (currentPage < totalPages - 1) {
@@ -171,7 +161,6 @@ export default function App() {
   };
 
   const renderCurrentPage = () => {
-    // Page 0: Cover
     if (currentPage === 0) {
       return (
         <CoverPage
@@ -180,29 +169,13 @@ export default function App() {
           duration={data.duration}
           dates={data.dates}
           coverImage={data.coverImage}
-          isGroupTrip={isGroupTrip}
-          participantCount={data.group?.participants?.length ?? 0}
         />
       );
     }
 
-    // Page 1: Participants (only if participants exist)
-    if (hasParticipants && currentPage === 1) {
-      return (
-        <ParticipantsPage
-          participants={data.group.participants}
-          collectPreferences={data.group.collect_preferences ?? false}
-        />
-      );
-    }
-
-    // Days: page offset depends on whether participants page is present
-    const daysStartPage = hasParticipants ? 2 : 1;
     const daysCount = data.days.length;
-    const daysEndPage = daysStartPage + daysCount - 1;
-
-    if (currentPage >= daysStartPage && currentPage <= daysEndPage) {
-      const dayIndex = currentPage - daysStartPage;
+    if (currentPage >= 1 && currentPage <= daysCount) {
+      const dayIndex = currentPage - 1;
       return (
         <DayPage
           dayNumber={data.days[dayIndex].dayNumber}
@@ -212,7 +185,6 @@ export default function App() {
       );
     }
 
-    // Last page: Notes
     return <NotesPage notes={data.notes} />;
   };
 
