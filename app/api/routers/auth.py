@@ -1,7 +1,5 @@
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, status
-
 from app.core.repository import repo
 from app.core.schemas import (
     ClerkUserSync,
@@ -10,6 +8,7 @@ from app.core.schemas import (
     UserPreferences,
     UserPreferencesCreate,
 )
+from fastapi import APIRouter, HTTPException, status
 
 # Create the router
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -42,7 +41,9 @@ async def get_user_by_clerk_id(clerk_user_id: str):
     """
     user = await repo.get_user_by_clerk_id(clerk_user_id)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
     return user
 
 
@@ -53,7 +54,9 @@ async def get_user_by_email(email: str):
     """
     user = await repo.get_user_by_email(email)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
     return user
 
 
@@ -65,7 +68,9 @@ async def delete_user(clerk_user_id: str):
     try:
         result = repo.users_collection.delete_one({"clerk_user_id": clerk_user_id})
         if result.deleted_count == 0:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
         return {"message": "User deleted successfully"}
     except HTTPException:
         raise
@@ -90,7 +95,9 @@ async def update_user_onboarding(clerk_user_id: str, onboarding_data: Onboarding
             onboarding_skipped=onboarding_data.onboarding_skipped,
         )
         if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
         return user
     except HTTPException:
         raise
@@ -112,7 +119,9 @@ async def save_user_preferences(clerk_user_id: str, preferences: UserPreferences
         # Verify user exists
         user = await repo.get_user_by_clerk_id(clerk_user_id)
         if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+            )
 
         # Save preferences
         saved_preferences = await repo.save_user_preferences(clerk_user_id, preferences)
