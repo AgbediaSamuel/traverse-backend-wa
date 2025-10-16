@@ -40,9 +40,7 @@ class ClerkAuth:
             # In production, you should verify against Clerk's public keys
             payload = jwt.decode(
                 token,
-                options={
-                    "verify_signature": False
-                },  # Skip signature verification for now
+                options={"verify_signature": False},  # Skip signature verification for now
             )
 
             return payload

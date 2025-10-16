@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from dotenv import load_dotenv
+from pymongo import MongoClient
+
 from app.core.auth import get_password_hash, verify_password
 from app.core.schemas import (
     ClerkUserSync,
@@ -45,6 +48,7 @@ class MongoDBRepo:
         self.users_collection = self.db.users
         self.sessions_collection = self.db.sessions
         self.preferences_collection = self.db.user_preferences
+        self.trip_invites_collection = self.db.trip_invites
 
         # Test connection and create indexes only if connection works
         try:
@@ -78,7 +82,9 @@ class MongoDBRepo:
     def update_session(self, session_id: str, data: dict) -> None:
         self.sessions_collection.update_one({"id": session_id}, {"$set": data})
 
-    def get_active_session(self, clerk_user_id: str) -> Optional[dict]:
+    def get_active_session(
+        self, clerk_user_id: str, trip_type: Optional[str] = None
+    ) -> Optional[dict]:
         """Get the active session for a user, or create one if none exists."""
         session_doc = self.sessions_collection.find_one(
             {"clerk_user_id": clerk_user_id, "status": "active"}
@@ -95,6 +101,7 @@ class MongoDBRepo:
         new_session = {
             "id": session_id,
             "clerk_user_id": clerk_user_id,
+            "trip_type": trip_type,
             "status": "active",
             "itinerary_id": None,
             "messages": [],
@@ -154,13 +161,17 @@ class MongoDBRepo:
 
     # Itineraries
     def save_itinerary(
-        self, doc: ItineraryDocument, session_id: str | None = None
+        self,
+        doc: ItineraryDocument,
+        session_id: str | None = None,
+        clerk_user_id: str | None = None,
     ) -> str:
         itn_id = f"itn_{uuid.uuid4().hex[:12]}"
         itinerary_doc = {
             "id": itn_id,
             "document": doc.model_dump(mode="json"),
             "session_id": session_id,
+            "clerk_user_id": clerk_user_id,
             "created_at": time.time(),
         }
         self.itineraries_collection.insert_one(itinerary_doc)
@@ -178,19 +189,36 @@ class MongoDBRepo:
         return result.deleted_count > 0
 
     def get_user_itineraries(self, clerk_user_id: str) -> list[dict]:
-        """Get all itineraries for a user by finding their finalized sessions."""
-        # Find all finalized sessions for this user
+        """Get all itineraries for a user by finding their finalized sessions or direct clerk_user_id."""
+        # First, find itineraries directly linked to user (new flow)
+        direct_itineraries = list(
+            self.itineraries_collection.find({"clerk_user_id": clerk_user_id}).sort(
+                "created_at", -1
+            )
+        )
+
+        # Then find itineraries from finalized sessions (old flow)
         sessions = self.sessions_collection.find(
             {"clerk_user_id": clerk_user_id, "status": "finalized"},
             {"itinerary_id": 1, "created_at": 1},
         ).sort("created_at", -1)
 
         itineraries = []
+        seen_ids = set()
+
+        # Add direct itineraries first
+        for itn in direct_itineraries:
+            itn.pop("_id", None)
+            itineraries.append(itn)
+            seen_ids.add(itn["id"])
+
+        # Add session-based itineraries (avoid duplicates)
         for session in sessions:
-            if session.get("itinerary_id"):
+            if session.get("itinerary_id") and session["itinerary_id"] not in seen_ids:
                 itinerary = self.get_itinerary(session["itinerary_id"])
                 if itinerary:
                     itineraries.append(itinerary)
+                    seen_ids.add(session["itinerary_id"])
 
         return itineraries
 
@@ -426,6 +454,264 @@ class MongoDBRepo:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**preferences_doc)
         return None
+
+    def get_user_preferences_dict(self, clerk_user_id: str) -> Optional[dict]:
+        """Get user travel preferences as dict (sync version for itinerary generation)."""
+        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        if preferences_doc:
+            preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
+            return preferences_doc
+        return None
+
+    # =========================================================================
+    # Trip Invites Methods
+    # =========================================================================
+
+    def create_trip_invite(
+        self,
+        organizer_clerk_id: str,
+        organizer_email: str,
+        organizer_name: Optional[str],
+        trip_name: str,
+        destination: Optional[str] = None,
+        date_range_start: Optional[str] = None,
+        date_range_end: Optional[str] = None,
+        collect_preferences: bool = False,
+        trip_type: str = "group",
+    ) -> dict:
+        """Create a new trip invite."""
+        invite_id = str(uuid.uuid4())
+        now = datetime.utcnow()
+
+        # Add organizer as first participant
+        organizer_first_name = organizer_name.split()[0] if organizer_name else "Organizer"
+        organizer_last_name = (
+            " ".join(organizer_name.split()[1:])
+            if organizer_name and len(organizer_name.split()) > 1
+            else ""
+        )
+
+        organizer_participant = {
+            "email": organizer_email,
+            "first_name": organizer_first_name,
+            "last_name": organizer_last_name,
+            "is_organizer": True,
+            "status": "pending",
+            "available_dates": [],
+            "has_completed_preferences": False,
+            "submitted_at": None,
+        }
+
+        invite_doc = {
+            "id": invite_id,
+            "organizer_clerk_id": organizer_clerk_id,
+            "organizer_email": organizer_email,
+            "organizer_name": organizer_name,
+            "trip_name": trip_name,
+            "destination": destination,
+            "date_range_start": date_range_start,
+            "date_range_end": date_range_end,
+            "collect_preferences": collect_preferences,
+            "trip_type": trip_type,
+            "status": "draft",
+            "participants": [organizer_participant],  # Organizer as first participant
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        self.trip_invites_collection.insert_one(invite_doc)
+        invite_doc.pop("_id", None)
+        return invite_doc
+
+    def get_trip_invite(self, invite_id: str) -> Optional[dict]:
+        """Get a trip invite by ID."""
+        invite_doc = self.trip_invites_collection.find_one({"id": invite_id})
+        if invite_doc:
+            invite_doc.pop("_id", None)
+            return invite_doc
+        return None
+
+    def get_user_trip_invites(self, clerk_user_id: str) -> list[dict]:
+        """Get all trip invites created by a user."""
+        invites = list(self.trip_invites_collection.find({"organizer_clerk_id": clerk_user_id}))
+        for invite in invites:
+            invite.pop("_id", None)
+        return invites
+
+    def get_received_invites(self, email: str) -> list[dict]:
+        """Get all trip invites where user is a participant (but not the organizer)."""
+        invites = list(
+            self.trip_invites_collection.find(
+                {
+                    "participants.email": email,
+                    "participants": {"$elemMatch": {"email": email, "is_organizer": {"$ne": True}}},
+                }
+            )
+        )
+        for invite in invites:
+            invite.pop("_id", None)
+        return invites
+
+    def delete_trip_invite(self, invite_id: str) -> bool:
+        """Delete a trip invite."""
+        result = self.trip_invites_collection.delete_one({"id": invite_id})
+        return result.deleted_count > 0
+
+    def add_participant(
+        self,
+        invite_id: str,
+        email: str,
+        first_name: str,
+        last_name: str,
+    ) -> bool:
+        """Add a participant to a trip invite."""
+        participant = {
+            "email": email,
+            "first_name": first_name,
+            "last_name": last_name,
+            "is_organizer": False,
+            "status": "pending",
+            "available_dates": [],
+            "has_completed_preferences": False,
+            "submitted_at": None,
+        }
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$push": {"participants": participant},
+                "$set": {"updated_at": datetime.utcnow()},
+            },
+        )
+        return result.modified_count > 0
+
+    def update_participant(
+        self,
+        invite_id: str,
+        old_email: str,
+        new_email: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+    ) -> bool:
+        """Update a participant's information."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["email"] == old_email:
+                if new_email:
+                    participant["email"] = new_email
+                if first_name:
+                    participant["first_name"] = first_name
+                if last_name:
+                    participant["last_name"] = last_name
+                break
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def remove_participant(self, invite_id: str, email: str) -> bool:
+        """Remove a participant from a trip invite."""
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$pull": {"participants": {"email": email}},
+                "$set": {"updated_at": datetime.utcnow()},
+            },
+        )
+        return result.modified_count > 0
+
+    def mark_invites_sent(self, invite_id: str) -> bool:
+        """Mark all participants as invited and update invite status."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["status"] == "pending":
+                participant["status"] = "invited"
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "status": "sent",
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def submit_participant_response(
+        self,
+        invite_id: str,
+        participant_email: str,
+        available_dates: list[str],
+    ) -> bool:
+        """Submit a participant's availability response."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["email"] == participant_email:
+                participant["status"] = "responded"
+                participant["available_dates"] = available_dates
+                participant["submitted_at"] = datetime.utcnow()
+                break
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def mark_participant_preferences_completed(
+        self,
+        invite_id: str,
+        participant_email: str,
+    ) -> bool:
+        """Mark that a participant has completed their preferences."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["email"] == participant_email:
+                participant["has_completed_preferences"] = True
+                if participant["status"] == "responded":
+                    participant["status"] = "preferences_completed"
+                break
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
 
 
 # Create a single instance to be used throughout the app
