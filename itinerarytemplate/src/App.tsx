@@ -105,6 +105,7 @@ export default function App() {
   const [data, setData] = useState(defaultItineraryData);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPrintMode, setIsPrintMode] = useState(false);
 
   // Map backend document shape to this template's shape
   function mapDocumentToTemplate(doc: any) {
@@ -124,6 +125,8 @@ export default function App() {
           location: a.location ?? '',
           description: a.description ?? '',
           image: a.image ?? placeholderImg,
+          // Pass through backend-computed distance to next activity (in kilometers)
+          distance_to_next: typeof a.distance_to_next === 'number' ? a.distance_to_next : undefined,
         })),
       })),
       notes: doc.notes ?? [],
@@ -135,6 +138,8 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const itineraryId = params.get('itineraryId');
+    const printParam = params.get('print');
+    setIsPrintMode(printParam === '1');
     if (!itineraryId) return; // stay on default data
 
     setLoading(true);
@@ -168,6 +173,59 @@ export default function App() {
     if (currentPage > 0) {
       setCurrentPage(currentPage - 1);
     }
+  };
+
+  // Render all pages sequentially for print/PDF
+  const renderAllPages = () => {
+    const pages: JSX.Element[] = [];
+    // Cover
+    pages.push(
+      <div key="cover" className="print-page print-break">
+        <CoverPage
+          travelerName={data.traveler}
+          destination={data.destination}
+          duration={data.duration}
+          dates={data.dates}
+          coverImage={data.coverImage}
+          isGroupTrip={isGroupTrip}
+          participantCount={data.group?.participants?.length ?? 0}
+          printMode
+        />
+      </div>
+    );
+
+    // Participants page (optional)
+    if (hasParticipants) {
+      pages.push(
+        <div key="participants" className="print-page print-break">
+          <ParticipantsPage
+            participants={data.group!.participants}
+            collectPreferences={data.group!.collect_preferences ?? false}
+          />
+        </div>
+      );
+    }
+
+    // Day pages
+    data.days.forEach((d, idx) => {
+      const isLastContentPage = idx === data.days.length - 1 && (data.notes?.length ?? 0) === 0;
+      pages.push(
+        <div key={`day-${idx}`} className={`print-page ${isLastContentPage ? '' : 'print-break'}`}>
+          <DayPage dayNumber={d.dayNumber} date={d.date} activities={d.activities} printMode />
+        </div>
+      );
+    });
+
+    // Notes page (last)
+    if (data.notes && data.notes.length > 0) {
+      pages.push(
+        <div key="notes" className="print-page">
+          <NotesPage notes={data.notes} />
+        </div>
+      );
+    }
+
+    return <div>{pages}</div>;
   };
 
   const renderCurrentPage = () => {
@@ -228,13 +286,15 @@ export default function App() {
           <div className="bg-red-50 text-red-700 rounded-xl p-4 shadow">{error}</div>
         </div>
       )}
-      {renderCurrentPage()}
-      <NavigationControls
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onNext={handleNext}
-        onPrevious={handlePrevious}
-      />
+      {isPrintMode ? renderAllPages() : renderCurrentPage()}
+      {!isPrintMode && (
+        <NavigationControls
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onNext={handleNext}
+          onPrevious={handlePrevious}
+        />
+      )}
     </div>
   );
 }

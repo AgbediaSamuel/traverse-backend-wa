@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from app.core.llm_provider import LLMProvider
 from app.core.settings import get_settings
-from pydantic import BaseModel
 
 
 class ConversationState(BaseModel):
@@ -218,7 +219,9 @@ class ConversationManager:
         should_generate = False
         if is_finalize_request and updated_state.is_complete():
             should_generate = True
-            response = "Perfect! I have all the information I need. Generating your itinerary now..."
+            response = (
+                "Perfect! I have all the information I need. Generating your itinerary now..."
+            )
             return response, updated_state, should_generate
 
         # Build a context-aware prompt for the assistant

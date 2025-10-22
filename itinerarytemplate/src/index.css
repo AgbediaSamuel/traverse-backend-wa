@@ -1702,6 +1702,25 @@
   --sidebar-ring: oklch(.708 0 0);
 }
 
+/* ===== Print mode helpers ===== */
+@media print {
+  @page { size: A4 portrait; margin: 0; }
+  html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* Hide navigation controls while printing */
+  .no-print { display: none !important; }
+  /* Override screen heights in print mode to prevent whitespace */
+  .h-screen, .min-h-screen { height: auto !important; min-height: auto !important; }
+}
+
+.print-page {
+  width: 100%;
+  min-height: auto;
+  background: white;
+}
+
+/* Removed page breaks for continuous scroll PDF */
+.print-break { /* No page break */ }
+
 .dark {
   --background: oklch(.145 0 0);
   --foreground: oklch(.985 0 0);

@@ -21,6 +21,11 @@ class Activity(BaseModel):
     price_level: Optional[int] = Field(None, description="Price level (1-4)")
     google_maps_url: Optional[str] = Field(None, description="Google Maps link")
 
+    # Distance to next activity (None for last activity of the day)
+    distance_to_next: Optional[float] = Field(
+        None, description="Distance to next activity in kilometers"
+    )
+
 
 class Day(BaseModel):
     date: str = Field(
@@ -33,6 +38,9 @@ class Day(BaseModel):
 class GroupParticipant(BaseModel):
     first_name: str
     last_name: str
+    email: Optional[EmailStr] = None
+    email_sent: bool = False
+    email_sent_at: Optional[datetime] = None
 
 
 class GroupInfo(BaseModel):
@@ -72,9 +80,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
 
-    password: str = Field(
-        ..., min_length=8, description="Password must be at least 8 characters"
-    )
+    password: str = Field(..., min_length=8, description="Password must be at least 8 characters")
 
 
 class UserLogin(BaseModel):
@@ -285,6 +291,9 @@ class InviteParticipantBase(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
+    collect_preferences: bool = Field(
+        default=False, description="Whether to collect travel preferences from this participant"
+    )
 
 
 class InviteParticipantCreate(InviteParticipantBase):
@@ -308,7 +317,7 @@ class InviteParticipantResponse(InviteParticipantBase):
         default=False, description="Whether this participant is the trip organizer"
     )
     status: str = Field(
-        default="pending", pattern="^(pending|invited|responded|preferences_completed)$"
+        default="pending", pattern="^(pending|invited|responded|declined|preferences_completed)$"
     )
     available_dates: Optional[List[str]] = Field(
         default_factory=list, description="ISO date strings"
@@ -333,6 +342,9 @@ class TripInviteBase(BaseModel):
         default=False, description="Whether to collect preferences from participants"
     )
     trip_type: str = Field(default="group", pattern="^(solo|group)$", description="Type of trip")
+    cover_image: Optional[str] = Field(
+        None, description="Proxied cover image URL for the destination"
+    )
 
 
 class TripInviteCreate(TripInviteBase):

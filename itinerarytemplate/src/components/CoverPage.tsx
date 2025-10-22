@@ -8,11 +8,12 @@ interface CoverPageProps {
   coverImage: string;
   isGroupTrip?: boolean;
   participantCount?: number;
+  printMode?: boolean;
 }
 
-export function CoverPage({ travelerName, destination, duration, dates, coverImage, isGroupTrip, participantCount }: CoverPageProps) {
+export function CoverPage({ travelerName, destination, duration, dates, coverImage, isGroupTrip, participantCount, printMode = false }: CoverPageProps) {
   return (
-    <div className="h-screen relative overflow-hidden bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
+    <div className={`${printMode ? 'relative' : 'h-screen relative'} overflow-hidden bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 ${printMode ? 'py-16' : ''}`}>
       {/* Background Image */}
       <div className="absolute inset-0">
         <ImageWithFallback 

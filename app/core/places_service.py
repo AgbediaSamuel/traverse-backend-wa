@@ -3,7 +3,9 @@ Google Places API integration for fetching venue data and photos.
 """
 
 import os
+import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
@@ -63,6 +65,7 @@ class PlacesService:
         price_level: Optional[List[int]] = None,
         require_photo: bool = False,
         allowed_types: Optional[List[str]] = None,
+        max_pages: int = 1,
     ) -> List[Dict[str, Any]]:
         """
         Search for places using Text Search API.
@@ -102,32 +105,11 @@ class PlacesService:
             print(f"Error geocoding location: {e}")
             return []
 
-        # Now search for places near those coordinates
+        # Now search for places near those coordinates, with optional pagination
         search_url = f"{PLACES_API_BASE}/textsearch/json"
-        search_params = {
-            "query": query,  # Simplified - just the query
-            "location": f"{lat},{lng}",
-            "radius": radius,
-            "key": self.api_key,
-        }
 
-        try:
-            response = requests.get(
-                search_url,
-                params=search_params,
-                timeout=10,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            if data.get("status") != "OK":
-                print(f"Places search failed: {data.get('status')}")
-                return []
-
-            results = data.get("results", [])
-
-            # Filter by optional rating/price level/photo/type
-            filtered_results = []
+        def filter_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            filtered: List[Dict[str, Any]] = []
             for place in results:
                 # Check rating if requested
                 if min_rating is not None and place.get("rating", 0) < min_rating:
@@ -153,7 +135,13 @@ class PlacesService:
                     if not any(t in allowed_types for t in place_types):
                         continue
 
-                filtered_results.append(
+                # Extract lat/lng from geometry if available
+                geometry = place.get("geometry", {})
+                location = geometry.get("location", {})
+                lat_val = location.get("lat")
+                lng_val = location.get("lng")
+
+                filtered.append(
                     {
                         "place_id": place.get("place_id"),
                         "name": place.get("name"),
@@ -166,10 +154,59 @@ class PlacesService:
                             if place.get("photos")
                             else None
                         ),
+                        "lat": lat_val,
+                        "lng": lng_val,
                     }
                 )
+            return filtered
 
-            return filtered_results
+        try:
+            collected: List[Dict[str, Any]] = []
+            pages_fetched = 0
+            next_token: Optional[str] = None
+
+            while True:
+                params: Dict[str, Any]
+                if next_token:
+                    # When using next_page_token, only send token + key
+                    params = {
+                        "pagetoken": next_token,
+                        "key": self.api_key,
+                    }
+                else:
+                    params = {
+                        "query": query,
+                        "location": f"{lat},{lng}",
+                        "radius": radius,
+                        "key": self.api_key,
+                    }
+
+                response = requests.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                status = data.get("status")
+                if status not in ("OK", "ZERO_RESULTS"):
+                    # When token not ready, Google returns INVALID_REQUEST briefly
+                    if status == "INVALID_REQUEST" and next_token:
+                        time.sleep(2)
+                        continue
+                    print(f"Places search failed: {status}")
+                    break
+
+                results = data.get("results", [])
+                collected.extend(filter_results(results))
+
+                pages_fetched += 1
+                next_token = data.get("next_page_token")
+
+                if not next_token or pages_fetched >= max_pages:
+                    break
+
+                # Per Google docs, next_page_token requires a short wait
+                time.sleep(2)
+
+            return collected
 
         except Exception as e:
             print(f"Error searching places: {e}")
@@ -248,6 +285,21 @@ class PlacesService:
             f"&photo_reference={photo_reference}"
             f"&key={self.api_key}"
         )
+
+    def get_proxy_photo_url(
+        self, photo_reference: str, base_url: str, max_width: int = 1080
+    ) -> Optional[str]:
+        """Build absolute URL to backend photo proxy.
+
+        Args:
+            photo_reference: Google Places photo_reference
+            base_url: Request base URL (e.g., "http://localhost:8765/")
+            max_width: Desired width
+        """
+        if not photo_reference or not base_url:
+            return None
+        base = base_url.rstrip("/")
+        return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
 
     def autocomplete_places(self, query: str, limit: int = 6) -> List[Dict[str, Any]]:
         """Return lightweight autocomplete suggestions for destinations.

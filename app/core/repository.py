@@ -19,8 +19,6 @@ from app.core.schemas import (
     UserPreferences,
     UserPreferencesCreate,
 )
-from dotenv import load_dotenv
-from pymongo import MongoClient
 
 # Load environment variables
 load_dotenv()
@@ -183,6 +181,13 @@ class MongoDBRepo:
             itinerary_doc.pop("_id", None)  # Remove MongoDB ObjectId
         return itinerary_doc
 
+    def update_itinerary(self, itinerary_id: str, updated_document: dict) -> bool:
+        """Update an itinerary document in MongoDB."""
+        result = self.itineraries_collection.update_one(
+            {"id": itinerary_id}, {"$set": {"document": updated_document}}
+        )
+        return result.modified_count > 0 or result.matched_count > 0
+
     def delete_itinerary(self, itinerary_id: str) -> bool:
         """Delete an itinerary from MongoDB."""
         result = self.itineraries_collection.delete_one({"id": itinerary_id})
@@ -286,13 +291,7 @@ class MongoDBRepo:
             return None
 
         # Return User model (without hashed_password)
-        return User(
-            **{
-                k: v
-                for k, v in user_in_db.model_dump().items()
-                if k != "hashed_password"
-            }
-        )
+        return User(**{k: v for k, v in user_in_db.model_dump().items() if k != "hashed_password"})
 
     # Clerk Integration Methods
     async def sync_clerk_user(self, clerk_data: ClerkUserSync) -> User:
@@ -332,9 +331,7 @@ class MongoDBRepo:
             if "onboarding_skipped" not in existing_user:
                 update_data["onboarding_skipped"] = False
 
-            self.users_collection.update_one(
-                {"_id": existing_user["_id"]}, {"$set": update_data}
-            )
+            self.users_collection.update_one({"_id": existing_user["_id"]}, {"$set": update_data})
 
             # Return updated user
             updated_user = self.users_collection.find_one({"_id": existing_user["_id"]})
@@ -434,22 +431,16 @@ class MongoDBRepo:
         )
 
         # Return the saved preferences
-        saved_doc = self.preferences_collection.find_one(
-            {"clerk_user_id": clerk_user_id}
-        )
+        saved_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
         if saved_doc:
             saved_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**saved_doc)
         else:
             raise Exception("Failed to save user preferences")
 
-    async def get_user_preferences(
-        self, clerk_user_id: str
-    ) -> Optional[UserPreferences]:
+    async def get_user_preferences(self, clerk_user_id: str) -> Optional[UserPreferences]:
         """Get user travel preferences by Clerk user ID."""
-        preferences_doc = self.preferences_collection.find_one(
-            {"clerk_user_id": clerk_user_id}
-        )
+        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
         if preferences_doc:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**preferences_doc)
@@ -478,6 +469,7 @@ class MongoDBRepo:
         date_range_end: Optional[str] = None,
         collect_preferences: bool = False,
         trip_type: str = "group",
+        cover_image: Optional[str] = None,
     ) -> dict:
         """Create a new trip invite."""
         invite_id = str(uuid.uuid4())
@@ -513,6 +505,7 @@ class MongoDBRepo:
             "date_range_end": date_range_end,
             "collect_preferences": collect_preferences,
             "trip_type": trip_type,
+            "cover_image": cover_image,
             "status": "draft",
             "participants": [organizer_participant],  # Organizer as first participant
             "created_at": now,
@@ -557,12 +550,26 @@ class MongoDBRepo:
         result = self.trip_invites_collection.delete_one({"id": invite_id})
         return result.deleted_count > 0
 
+    def update_invite_preferences(self, invite_id: str, collect_preferences: bool) -> bool:
+        """Update collect_preferences setting for a trip invite."""
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "collect_preferences": collect_preferences,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
     def add_participant(
         self,
         invite_id: str,
         email: str,
         first_name: str,
         last_name: str,
+        collect_preferences: bool = False,
     ) -> bool:
         """Add a participant to a trip invite."""
         participant = {
@@ -574,6 +581,7 @@ class MongoDBRepo:
             "available_dates": [],
             "has_completed_preferences": False,
             "submitted_at": None,
+            "collect_preferences": collect_preferences,
         }
 
         result = self.trip_invites_collection.update_one(
@@ -620,6 +628,31 @@ class MongoDBRepo:
         )
         return result.modified_count > 0
 
+    def update_participant_collect_preferences(
+        self, invite_id: str, email: str, collect_preferences: bool
+    ) -> bool:
+        """Update a participant's collect_preferences setting."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["email"] == email:
+                participant["collect_preferences"] = collect_preferences
+                break
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
     def remove_participant(self, invite_id: str, email: str) -> bool:
         """Remove a participant from a trip invite."""
         result = self.trip_invites_collection.update_one(
@@ -647,6 +680,34 @@ class MongoDBRepo:
             {
                 "$set": {
                     "status": "sent",
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def update_participant_status(
+        self,
+        invite_id: str,
+        participant_email: str,
+        status: str,
+    ) -> bool:
+        """Update a participant's status."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["email"] == participant_email:
+                participant["status"] = status
+                break
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
                     "participants": participants,
                     "updated_at": datetime.utcnow(),
                 }

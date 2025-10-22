@@ -1,10 +1,11 @@
 from typing import Optional
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from app.core.auth import verify_token
 from app.core.repository import repo
 from app.core.schemas import User
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # HTTP Bearer token security scheme
 security = HTTPBearer()
@@ -69,9 +70,7 @@ async def get_current_active_user(
         HTTPException: 400 Bad Request if user is inactive
     """
     if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
 
 
@@ -119,9 +118,7 @@ class RequireScopes:
     def __init__(self, required_scopes: list[str]):
         self.required_scopes = required_scopes
 
-    async def __call__(
-        self, current_user: User = Depends(get_current_active_user)
-    ) -> User:
+    async def __call__(self, current_user: User = Depends(get_current_active_user)) -> User:
         """
         Check if the current user has the required scopes.
 
