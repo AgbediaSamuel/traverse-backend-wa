@@ -11,7 +11,7 @@ import hmac
 import json
 import os
 import traceback
-from typing import Any, Dict
+from typing import Any
 
 from app.core.repository import repo
 from app.core.schemas import ClerkUserSync
@@ -169,11 +169,11 @@ async def handle_clerk_webhook(request: Request):
         print(f"Webhook processing error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Webhook processing failed: {str(e)}",
+            detail=f"Webhook processing failed: {e!s}",
         )
 
 
-async def handle_user_created(user_data: Dict[str, Any]):
+async def handle_user_created(user_data: dict[str, Any]):
     """Handle user.created webhook event"""
     try:
         print(f"👤 Creating new user from webhook: {user_data.get('id')}")
@@ -202,7 +202,7 @@ async def handle_user_created(user_data: Dict[str, Any]):
         raise
 
 
-async def handle_user_updated(user_data: Dict[str, Any]):
+async def handle_user_updated(user_data: dict[str, Any]):
     """Handle user.updated webhook event"""
     try:
         print(f"🔄 Updating user from webhook: {user_data.get('id')}")
@@ -231,7 +231,7 @@ async def handle_user_updated(user_data: Dict[str, Any]):
         raise
 
 
-async def handle_user_deleted(user_data: Dict[str, Any]):
+async def handle_user_deleted(user_data: dict[str, Any]):
     """Handle user.deleted webhook event"""
     try:
         clerk_user_id = user_data.get("id")

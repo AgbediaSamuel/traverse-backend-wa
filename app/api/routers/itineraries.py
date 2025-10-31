@@ -64,6 +64,7 @@ def _parse_itinerary_json_or_502(raw_text: str) -> ItineraryDocument:
 @router.get("/sample", response_model=ItineraryDocument)
 def get_sample_itinerary() -> ItineraryDocument:
     return ItineraryDocument(
+        trip_name="Vegas Weekend",
         traveler_name="Sheriff",
         destination="Las Vegas",
         dates="March 15-17, 2025",
@@ -117,8 +118,8 @@ def get_sample_itinerary() -> ItineraryDocument:
     )
 
 
-@router.post("/generate", response_model=Dict[str, Any])
-def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
+@router.post("/generate", response_model=dict[str, Any])
+def generate_itinerary(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Generate an itinerary using hybrid approach:
     1. Fetch user preferences
@@ -130,7 +131,6 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
     from app.core.itinerary_planner import (
         calculate_daily_activities,
         get_activity_mix_guidance,
-        get_budget_price_levels,
     )
     from app.core.places_service import places_service
     from app.core.preference_aggregator import (
@@ -138,6 +138,7 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
         get_preference_summary,
     )
 
+    trip_name = payload.get("trip_name") or ""
     traveler_name = payload.get("traveler_name") or "Traveler"
     destination = payload.get("destination") or ""
     dates = payload.get("dates") or ""
@@ -145,10 +146,12 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
     clerk_user_id = payload.get("clerk_user_id")
     trip_type = payload.get("trip_type", "solo")  # "solo" or "group"
     invite_id = payload.get("invite_id")  # For group trips
+    vibe_notes = payload.get("vibe_notes") or ""  # Optional context for generation
 
-    if not traveler_name or not destination or not dates:
+    if not trip_name or not traveler_name or not destination or not dates:
         raise HTTPException(
-            status_code=400, detail="traveler_name, destination and dates are required"
+            status_code=400,
+            detail="trip_name, traveler_name, destination and dates are required",
         )
 
     # Validation: Check for 7-day maximum
@@ -208,14 +211,12 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 # No preferences collected yet, use defaults
                 aggregated_prefs = aggregate_preferences([])
-        else:
-            # Group trip but no preferences collected, use organizer's preferences
-            if clerk_user_id:
-                aggregated_prefs = repo.get_user_preferences_dict(clerk_user_id)
-    else:
-        # Solo trip: use user's own preferences
-        if clerk_user_id:
+        # Group trip but no preferences collected, use organizer's preferences
+        elif clerk_user_id:
             aggregated_prefs = repo.get_user_preferences_dict(clerk_user_id)
+    # Solo trip: use user's own preferences
+    elif clerk_user_id:
+        aggregated_prefs = repo.get_user_preferences_dict(clerk_user_id)
 
     # Default preferences if not found
     budget_style = aggregated_prefs.get("budget_style", 50) if aggregated_prefs else 50
@@ -233,12 +234,11 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
             start = datetime.fromisoformat(date_parts[0].strip())
             end = datetime.fromisoformat(date_parts[1].strip())
             total_days = (end - start).days + 1
+        # Fallback: estimate from duration string
+        elif "day" in duration.lower():
+            total_days = int("".join(filter(str.isdigit, duration))) or 3
         else:
-            # Fallback: estimate from duration string
-            if "day" in duration.lower():
-                total_days = int("".join(filter(str.isdigit, duration))) or 3
-            else:
-                total_days = 3
+            total_days = 3
     except:
         total_days = 3  # Default fallback
 
@@ -342,12 +342,24 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
             f"\n- Interests: {', '.join(selected_interests[:10]) if selected_interests else 'General sightseeing'}"
         )
 
+    # Add vibe notes to context if provided
+    vibe_context = ""
+    if vibe_notes:
+        vibe_context = (
+            f"\n\nUSER'S SPECIFIC REQUESTS (VIBE NOTES): {vibe_notes}"
+            "\n⚠️ IMPORTANT: Prioritize venues and activities that match these specific vibes and requests."
+            "\nIf the user mentions specific types of places, actively search for them."
+        )
+
     system = {
         "role": "system",
         "content": (
             "Output ONLY a valid JSON object matching the ItineraryDocument schema. "
-            f"\n\nCurrent date: {current_date}" + pref_context_header + f"\n\nActivity Planning:"
-            f"\n" + "\n".join(daily_guidance) + venues_context + "\n\nCRITICAL - DATES:"
+            f"\n\nCurrent date: {current_date}"
+            + pref_context_header
+            + vibe_context
+            + "\n\nActivity Planning:"
+            "\n" + "\n".join(daily_guidance) + venues_context + "\n\nCRITICAL - DATES:"
             f"\n- The trip dates provided are: {dates}"
             f"\n- The trip duration is: {duration}"
             f"\n- If the dates don't include a year, assume {current_year} or the next occurrence of those dates"
@@ -369,7 +381,7 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
             "\n- Set cover_image to null (will be added later)"
             "\n- Set activity images to null (will be added later)"
             "\n- Generate 3-5 helpful travel tips in the 'notes' array"
-            "\n\nRequired JSON shape: {traveler_name, destination, dates, duration, cover_image, "
+            "\n\nRequired JSON shape: {trip_name, traveler_name, destination, dates, duration, cover_image, "
             "days:[{date, activities:[{time,title,location,description,image,place_id}]}], notes:[]}"
         ),
     }
@@ -378,6 +390,7 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
         "role": "user",
         "content": json.dumps(
             {
+                "trip_name": trip_name,
                 "traveler_name": traveler_name,
                 "destination": destination,
                 "dates": dates,
@@ -482,15 +495,15 @@ def generate_itinerary(payload: Dict[str, Any]) -> Dict[str, Any]:
 # ----------------------------------------------
 # New deterministic generator (no LLM selection)
 # ----------------------------------------------
-@router.post("/generate2", response_model=Dict[str, Any])
-def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
+@router.post("/generate2", response_model=dict[str, Any])
+def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Deterministic itinerary generation using weighted scoring over Google Places
     results plus user/group preferences. No LLM is used for venue selection.
 
     Expected payload: {
-      traveler_name, destination, dates ("YYYY-MM-DD - YYYY-MM-DD"),
-      duration?, clerk_user_id?, trip_type? (solo|group), invite_id?, notes?
+      trip_name, traveler_name, destination, dates ("YYYY-MM-DD - YYYY-MM-DD"),
+      duration?, clerk_user_id?, trip_type? (solo|group), invite_id?, notes?, vibe_notes?
     }
     """
     from datetime import datetime, timedelta
@@ -506,6 +519,7 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
         get_preference_summary,
     )
 
+    trip_name = payload.get("trip_name") or ""
     traveler_name = payload.get("traveler_name") or "Traveler"
     destination = payload.get("destination") or ""
     dates = payload.get("dates") or ""
@@ -515,10 +529,12 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
     invite_id = payload.get("invite_id")
     payload_participants = payload.get("participants") or []  # optional [{first_name,last_name}]
     notes_text = (payload.get("notes") or "").lower()
+    vibe_notes = payload.get("vibe_notes") or ""  # Optional context for generation
 
-    if not traveler_name or not destination or not dates:
+    if not trip_name or not traveler_name or not destination or not dates:
         raise HTTPException(
-            status_code=400, detail="traveler_name, destination and dates are required"
+            status_code=400,
+            detail="trip_name, traveler_name, destination and dates are required",
         )
 
     # Parse dates → list of day strings
@@ -538,7 +554,7 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid dates: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid dates: {e!s}")
 
     # Load preferences (solo: user, group: aggregated if enabled)
     aggregated_prefs = None
@@ -558,17 +574,88 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
                 if org_p:
                     pref_docs.append(org_p)
             aggregated_prefs = aggregate_preferences(pref_docs)
-        else:
-            if clerk_user_id:
-                aggregated_prefs = repo.get_user_preferences_dict(clerk_user_id)
-    else:
-        if clerk_user_id:
+        elif clerk_user_id:
             aggregated_prefs = repo.get_user_preferences_dict(clerk_user_id)
+    elif clerk_user_id:
+        aggregated_prefs = repo.get_user_preferences_dict(clerk_user_id)
 
     budget_style = aggregated_prefs.get("budget_style", 50) if aggregated_prefs else 50
     pace_style = aggregated_prefs.get("pace_style", 50) if aggregated_prefs else 50
     schedule_style = aggregated_prefs.get("schedule_style", 50) if aggregated_prefs else 50
     interests = aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
+    other_interests_texts = aggregated_prefs.get("other_interests", []) if aggregated_prefs else []
+
+    # Extract structured info from other_interests using NLP
+    from app.core.preference_extractor import extract_preferences_from_text
+
+    extracted_from_other = {
+        "search_queries": [],
+        "place_types": [],
+        "keywords": [],
+        "preference_signals": {},
+    }
+
+    if other_interests_texts:
+        # Combine all other_interests texts
+        combined_text = " ".join(other_interests_texts)
+
+        # Extract with context
+        extracted_from_other = extract_preferences_from_text(
+            combined_text,
+            context={
+                "destination": destination,
+                "trip_type": trip_type,
+                "selected_interests": interests,
+            },
+        )
+
+        print(
+            f"[PreferenceExtractor] Extracted {len(extracted_from_other['search_queries'])} search queries from other_interests"
+        )
+
+    # Extract structured info from vibe_notes (solo trips only, not group)
+    extracted_from_vibe = {
+        "search_queries": [],
+        "place_types": [],
+        "keywords": [],
+        "preference_signals": {},
+    }
+
+    if vibe_notes and trip_type == "solo":
+        extracted_from_vibe = extract_preferences_from_text(
+            vibe_notes,
+            context={
+                "destination": destination,
+                "trip_type": trip_type,
+                "selected_interests": interests,
+            },
+        )
+
+        # Merge with other_interests extraction
+        extracted_from_other["search_queries"].extend(extracted_from_vibe["search_queries"])
+        extracted_from_other["place_types"].extend(extracted_from_vibe["place_types"])
+        extracted_from_other["keywords"].extend(extracted_from_vibe["keywords"])
+
+        # Merge preference signals
+        for key, value in extracted_from_vibe["preference_signals"].items():
+            if key not in extracted_from_other["preference_signals"]:
+                extracted_from_other["preference_signals"][key] = []
+            # Convert existing value to list if it's a string
+            existing = extracted_from_other["preference_signals"][key]
+            if isinstance(existing, str):
+                extracted_from_other["preference_signals"][key] = [existing]
+            # Now merge the new value
+            if isinstance(value, list):
+                extracted_from_other["preference_signals"][key].extend(value)
+            else:
+                extracted_from_other["preference_signals"][key].append(value)
+
+        print(
+            f"[VibeNotes] Extracted {len(extracted_from_vibe['search_queries'])} search queries from vibe notes"
+        )
+
+    # Combine all extracted keywords for scoring
+    all_extracted_keywords = extracted_from_other["keywords"]
 
     # Estimate activities per day
     daily_plan = calculate_daily_activities(pace_style, schedule_style, len(day_list))
@@ -644,14 +731,25 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[Adaptive Pool] Days: {num_days}, Total needed: {total_needed}, "
           f"Target candidates: {max_results}")
 
-    # --- PASS A: STRICT SEARCH (interests + photos) ---
-    print(f"[Pass A] Searching with interests + photo requirement...")
+    # --- PASS A: STRICT SEARCH (interests + extracted queries + photos) ---
+    print("[Pass A] Searching with interests + extracted queries + photo requirement...")
+
+    # Merge interests with extracted search queries
+    all_search_queries = interests.copy()
+    if extracted_from_other["search_queries"]:
+        all_search_queries.extend(extracted_from_other["search_queries"])
+        print(
+            f"[Pass A] Added {len(extracted_from_other['search_queries'])} extracted search queries"
+        )
+
     candidates = places_service.search_by_preferences(
         destination=destination,
-        user_interests=interests,
+        user_interests=interests,  # Keep original interests for mapping
         budget_style=budget_style,
         max_results=max_results,
         require_photo=True,
+        extracted_queries=extracted_from_other["search_queries"],  # NEW: Pass extracted queries
+        extracted_place_types=extracted_from_other["place_types"],  # NEW: Pass extracted types
     )
     pass_a_count = len(candidates)
     print(f"[Pass A] Found {pass_a_count} candidates")
@@ -732,6 +830,54 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
             return 0.5
         return max(0.0, min(1.0, (rating - 3.5) / 1.5))  # 3.5→0, 5.0→1
 
+    # Build interest mapping for scoring
+    from app.core.itinerary_planner import map_interests_to_place_types
+
+    interest_mapping = {}
+    for interest in interests:
+        queries = map_interests_to_place_types([interest])
+        if queries:
+            interest_mapping[interest] = queries[0]
+
+    def interest_match_score(
+        venue: dict[str, Any],
+        selected_interests: list[str],
+        extracted_keywords: list[str],
+        interest_mapping: dict[str, str],
+    ) -> float:
+        """
+        Score how well a venue matches user's selected interests.
+
+        Returns:
+            Score between 0.0 and 1.0
+        """
+        venue_name = (venue.get("name") or "").lower()
+        venue_types = [t.lower() for t in (venue.get("types") or [])]
+        venue_text = venue_name + " " + " ".join(venue_types)
+
+        score = 0.0
+        matches = 0
+
+        # Check against selected_interests mapping
+        for interest in selected_interests:
+            if interest in interest_mapping:
+                query_terms = interest_mapping[interest].lower().split()
+                # Check if any query term appears in venue
+                if any(term in venue_text for term in query_terms):
+                    matches += 1
+
+        # Normalize: 0-1 based on number of interests matched
+        if selected_interests:
+            score = min(1.0, matches / len(selected_interests))
+
+        # Boost from extracted keywords (from other_interests/vibe_notes)
+        if extracted_keywords:
+            keyword_matches = sum(1 for kw in extracted_keywords if kw.lower() in venue_text)
+            keyword_score = min(0.3, keyword_matches / len(extracted_keywords) * 0.3)
+            score += keyword_score
+
+        return min(1.0, score)  # Cap at 1.0
+
     note_boost_terms = [
         "museum",
         "coffee",
@@ -742,30 +888,48 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
         "live music",
     ]
 
-    def notes_boost(v: Dict[str, Any]) -> float:
-        text = (v.get("name") or "") + " " + (v.get("types") and " ".join(v.get("types")) or "")
-        text = text.lower()
-        # Slightly higher boost when we have abundance
-        boost_val = 0.25 if len(candidates) >= 100 else 0.2
-        return boost_val if any(t in notes_text and t in text for t in note_boost_terms) else 0.0
+    # Add extracted keywords to boost terms
+    if all_extracted_keywords:
+        note_boost_terms.extend(all_extracted_keywords[:10])  # Limit to 10 additional terms
 
-    # Score each candidate
-    scored: list[Dict[str, Any]] = []
+    def notes_boost(v: dict[str, Any]) -> float:
+        text = (v.get("name") or "") + " " + ((v.get("types") and " ".join(v.get("types"))) or "")
+        text = text.lower()
+        # Reduced boost weight since we now have interest_match_score
+        # Check against both extracted keywords and legacy notes_text
+        boost_val = 0.15 if len(candidates) >= 100 else 0.1
+        boost_terms_to_check = note_boost_terms.copy()
+        if notes_text:
+            boost_terms_to_check.extend(notes_text.split())
+        return boost_val if any(t in text for t in boost_terms_to_check) else 0.0
+
+    # Score each candidate with updated weights
+    scored: list[dict[str, Any]] = []
     for v in candidates:
         s = 0.0
-        s += 0.5 * popularity_score(v.get("rating"))
-        s += 0.3 * price_fit_score(v.get("price_level"))
-        # Prefer venues with photos, but don't exclude those without
-        s += 0.2 * (1.0 if v.get("photo_reference") else 0.3)
+
+        # Updated weights: more emphasis on interest matching
+        s += 0.35 * popularity_score(v.get("rating"))  # Reduced from 0.5
+        s += 0.25 * price_fit_score(v.get("price_level"))  # Reduced from 0.3
+        s += 0.15 * (1.0 if v.get("photo_reference") else 0.3)  # Reduced from 0.2
+
+        # NEW: Interest match score (25% of total)
+        interest_score = interest_match_score(
+            v, interests, all_extracted_keywords, interest_mapping
+        )
+        s += 0.25 * interest_score
+
+        # Existing notes boost (reduced weight)
         s += notes_boost(v)
+
         scored.append({"venue": v, "score": s})
 
     # Sort by score and enforce uniqueness & diversity
     scored.sort(key=lambda x: x["score"], reverse=True)
 
-    chosen: list[Dict[str, Any]] = []
+    chosen: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    seen_types: Dict[str, int] = {}
+    seen_types: dict[str, int] = {}
 
     def type_key(vtypes: list[str]):
         return vtypes[0] if vtypes else "other"
@@ -894,6 +1058,178 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
     for i, day in enumerate(days):
         print(f"[Day {i+1}] {len(day.activities)} activities assigned")
 
+    # Apply LLM-based timing to each day's activities
+    print("[Timing] Generating realistic activity times with LLM...")
+    try:
+        from app.core.llm_provider import LLMProvider
+        from app.core.settings import get_settings
+
+        settings = get_settings()
+        provider = LLMProvider(model=settings.aisuite_model)
+
+        for day_idx, day in enumerate(days):
+            if not day.activities:
+                continue
+
+            # Build activity context with types and locations
+            activity_context = []
+            for idx, act in enumerate(day.activities):
+                # Extract primary venue type
+                venue_type = "general"
+                if hasattr(act, "place_id") and act.place_id:
+                    # Find the original venue to get types
+                    for v in chosen:
+                        if v.get("place_id") == act.place_id:
+                            types = v.get("types", [])
+                            if types:
+                                venue_type = types[0].replace("_", " ")
+                            break
+
+                activity_context.append(
+                    f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
+                )
+
+            # Interpret schedule preference for timing guidance (3 profiles)
+            if schedule_style <= 33:
+                schedule_guidance = "EARLY BIRD: Start first activity 7:00-8:00 AM, end day by 9:00 PM"
+            elif schedule_style <= 66:
+                schedule_guidance = "BALANCED: Start first activity 9:00-10:00 AM, end day by 10:00 PM"
+            else:
+                schedule_guidance = "NIGHT OWL: Start first activity 10:00-11:00 AM, end day around 11:00 PM-midnight"
+
+            timing_prompt = {
+                "role": "system",
+                "content": (
+                    "You are a travel itinerary timing optimizer. Given a list of activities for a single day, "
+                    "assign realistic start times considering:\n\n"
+                    "VENUE OPERATING HOURS (respect these constraints):\n"
+                    "- Museums/Attractions: 9:00 AM - 5:00/6:00 PM\n"
+                    "- Restaurants (lunch): 11:30 AM - 2:30 PM\n"
+                    "- Restaurants (dinner): 5:00 PM - 10:00 PM\n"
+                    "- Cafes/Breakfast: 7:00 AM - 11:00 AM\n"
+                    "- Bars/Nightlife: 7:00 PM onwards\n"
+                    "- Parks/Outdoor: Daylight hours (6:00 AM - sunset)\n"
+                    "- Shopping: 10:00 AM - 8:00 PM\n\n"
+                    "OTHER FACTORS:\n"
+                    "- Typical activity duration (museums 2-3h, meals 1-2h, attractions 1-2h)\n"
+                    "- Travel time between venues (assume 15-30min in same area)\n"
+                    "- Natural pacing (avoid rushing, include breaks)\n\n"
+                    f"SCHEDULE PREFERENCE: {schedule_guidance}\n"
+                    "Shift activities earlier/later within realistic venue hours based on this preference.\n\n"
+                    "Return ONLY a JSON array of time strings in 12-hour format (e.g., ['9:00 AM', '12:30 PM', '3:00 PM']).\n"
+                    "The array must have exactly the same number of times as activities provided."
+                ),
+            }
+
+            timing_user = {
+                "role": "user",
+                "content": f"Day {day_idx+1} activities:\n" + "\n".join(activity_context),
+            }
+
+            timing_response = provider.chat(messages=[timing_prompt, timing_user], temperature=0.3)
+
+            # Parse timing response
+            import json
+            import re
+
+            print(f"[Timing Debug] Raw LLM response: {timing_response[:300]}")
+
+            timing_text = timing_response.strip()
+
+            if not timing_text:
+                print("[Timing] Empty response from LLM")
+                raise ValueError("Empty LLM response")
+
+            # Remove markdown code fences
+            if timing_text.startswith("```"):
+                lines = timing_text.split("\n")
+                timing_text = "\n".join([l for l in lines if not l.startswith("```")])
+
+            # Try to extract JSON array from text
+            # Look for [...] pattern
+            match = re.search(r"\[.*?\]", timing_text, re.DOTALL)
+            if match:
+                timing_text = match.group(0)
+            else:
+                print(f"[Timing] No JSON array found in response: {timing_text[:200]}")
+                raise ValueError("No JSON array in response")
+
+            # LLM might return Python list with single quotes - convert to JSON
+            timing_text = timing_text.replace("'", '"')
+
+            print(f"[Timing Debug] Extracted JSON: {timing_text[:200]}")
+            times = json.loads(timing_text)
+
+            # Validate and apply times
+            if isinstance(times, list) and len(times) == len(day.activities):
+                for idx, time_str in enumerate(times):
+                    day.activities[idx].time = time_str
+                print(f"[Day {day_idx+1}] Applied {len(times)} LLM-generated times")
+            else:
+                print(
+                    f"[Day {day_idx+1}] WARNING: LLM returned invalid timing ({len(times)} vs {len(day.activities)})"
+                )
+                # Fallback to rule-based times
+                for idx, act in enumerate(day.activities):
+                    fallback_slots = [
+                        "9:00 AM",
+                        "12:00 PM",
+                        "3:00 PM",
+                        "6:00 PM",
+                        "8:30 PM",
+                    ]
+                    act.time = fallback_slots[idx % len(fallback_slots)]
+
+    except Exception as e:
+        print(f"[Timing] Error generating times with LLM: {e}")
+        # Fallback: assign rule-based times
+        for day in days:
+            for idx, act in enumerate(day.activities):
+                fallback_slots = ["9:00 AM", "12:00 PM", "3:00 PM", "6:00 PM", "8:30 PM"]
+                act.time = fallback_slots[idx % len(fallback_slots)]
+
+    # Calculate distances between consecutive activities
+    print("[Distance] Calculating distances between activities...")
+    from app.core.geo_utils import haversine_distance
+
+    for day_idx, day in enumerate(days):
+        if len(day.activities) < 2:
+            continue
+
+        for idx in range(len(day.activities) - 1):
+            current_act = day.activities[idx]
+            next_act = day.activities[idx + 1]
+
+            # Find lat/lng for both activities from chosen venues
+            current_coords = None
+            next_coords = None
+
+            if current_act.place_id:
+                for v in chosen:
+                    if v.get("place_id") == current_act.place_id:
+                        if v.get("lat") is not None and v.get("lng") is not None:
+                            current_coords = (v["lat"], v["lng"])
+                        break
+
+            if next_act.place_id:
+                for v in chosen:
+                    if v.get("place_id") == next_act.place_id:
+                        if v.get("lat") is not None and v.get("lng") is not None:
+                            next_coords = (v["lat"], v["lng"])
+                        break
+
+            # Calculate distance if we have both coordinates
+            if current_coords and next_coords:
+                distance_km = haversine_distance(
+                    current_coords[0], current_coords[1], next_coords[0], next_coords[1]
+                )
+                # Round to 1 decimal place
+                current_act.distance_to_next = round(distance_km, 1)
+
+        print(
+            f"[Day {day_idx+1}] Calculated {len([a for a in day.activities if a.distance_to_next is not None])} distances"
+        )
+
     # Generate personalized trip notes using LLM
     trip_notes = []
     try:
@@ -960,6 +1296,7 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
     
     # Build itinerary document (with optional group metadata)
     doc = ItineraryDocument(
+        trip_name=trip_name,
         traveler_name=traveler_name,
         destination=destination,
         dates=f"{day_list[0].date()} - {day_list[-1].date()}",
@@ -1030,6 +1367,17 @@ def generate_itinerary_v2(payload: Dict[str, Any]) -> Dict[str, Any]:
         pass
 
     itn_id = repo.save_itinerary(doc, clerk_user_id=clerk_user_id)
+
+    # Update invite with itinerary_id if this is a group trip
+    if invite_id:
+        try:
+            success = repo.update_invite_itinerary_id(invite_id, itn_id)
+            if not success:
+                print(f"Warning: Failed to update invite {invite_id} with itinerary_id {itn_id}")
+        except Exception as e:
+            print(f"Error updating invite with itinerary_id: {e}")
+            # Non-fatal: continue even if invite update fails
+
     return repo.get_itinerary(itn_id) or {"id": itn_id}
 
 
@@ -1064,7 +1412,17 @@ def create_itinerary(doc: ItineraryDocument):
 
 @router.delete("/{itinerary_id}")
 def delete_itinerary(itinerary_id: str):
-    """Delete an itinerary by ID."""
+    """Delete an itinerary by ID and cascade delete linked invites."""
+    # Find all invites linked to this itinerary
+    linked_invites = list(repo.trip_invites_collection.find({"itinerary_id": itinerary_id}))
+
+    # Delete all linked invites
+    deleted_invite_count = 0
+    if linked_invites:
+        result = repo.trip_invites_collection.delete_many({"itinerary_id": itinerary_id})
+        deleted_invite_count = result.deleted_count
+
+    # Delete the itinerary
     success = repo.delete_itinerary(itinerary_id)
     if not success:
         raise HTTPException(status_code=404, detail="Itinerary not found")

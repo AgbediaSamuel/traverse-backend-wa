@@ -45,20 +45,15 @@ export function DayPage({ dayNumber, date, activities }: DayPageProps) {
                       alt={activity.title}
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
-                    <div className="absolute bottom-4 left-4 text-white">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <div className="w-8 h-8 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center">
-                          <Clock className="w-4 h-4" />
-                        </div>
-                        <span className="text-sm font-medium">{activity.time}</span>
-                      </div>
-                    </div>
                   </div>
                   
                   {/* Content below image */}
                   <div className="pt-2">
                     <h3 className="text-xl mb-2 text-gray-800">{activity.title}</h3>
+                    <div className="flex items-center text-gray-600 mb-2">
+                      <Clock className="w-4 h-4 mr-2" />
+                      <span className="text-sm font-medium">{activity.time}</span>
+                    </div>
                     <div className="flex items-center text-gray-600 mb-3">
                       <MapPin className="w-4 h-4 mr-1" />
                       <span className="text-sm">{activity.location}</span>

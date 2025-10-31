@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.llm_provider import LLMProvider
 from app.core.settings import get_settings
@@ -12,21 +12,21 @@ class ConversationState(BaseModel):
     """Tracks the state of an itinerary planning conversation."""
 
     # Collected information
-    traveler_name: Optional[str] = None
-    destination: Optional[str] = None
-    dates: Optional[str] = None
-    duration: Optional[str] = None
-    trip_for_self: Optional[bool] = None  # True if trip is for the user, False if for someone else
+    traveler_name: str | None = None
+    destination: str | None = None
+    dates: str | None = None
+    duration: str | None = None
+    trip_for_self: bool | None = None  # True if trip is for the user, False if for someone else
 
     # Conversation metadata
-    itinerary_id: Optional[str] = None
-    last_question: Optional[str] = None
+    itinerary_id: str | None = None
+    last_question: str | None = None
 
     def is_complete(self) -> bool:
         """Check if we have all required information to generate itinerary."""
         return bool(self.traveler_name and self.destination and self.dates)
 
-    def get_missing_fields(self) -> List[str]:
+    def get_missing_fields(self) -> list[str]:
         """Get list of required fields that are still missing."""
         missing = []
         if not self.destination:
@@ -45,14 +45,14 @@ class ConversationState(BaseModel):
 class ConversationManager:
     """Manages itinerary planning conversations using LLM for NLU and dialogue management."""
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: str | None = None):
         settings = get_settings()
         self.model = model or settings.aisuite_model
         self.provider = LLMProvider(model=self.model)
 
     def extract_fields(
-        self, text: str, last_assistant_message: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, text: str, last_assistant_message: str | None = None
+    ) -> dict[str, Any]:
         """Extract itinerary-related fields from user input using LLM."""
         system_prompt = {
             "role": "system",
@@ -125,10 +125,10 @@ class ConversationManager:
         self,
         user_message: str,
         state: ConversationState,
-        conversation_history: List[Dict[str, str]],
-        user_first_name: Optional[str] = None,
-        current_date: Optional[str] = None,
-        current_day: Optional[str] = None,
+        conversation_history: list[dict[str, str]],
+        user_first_name: str | None = None,
+        current_date: str | None = None,
+        current_day: str | None = None,
     ) -> tuple[str, ConversationState, bool]:
         """
         Generate an appropriate response based on user message and current state.
@@ -269,9 +269,9 @@ class ConversationManager:
     def _build_system_context(
         self,
         state: ConversationState,
-        user_first_name: Optional[str] = None,
-        current_date: Optional[str] = None,
-        current_day: Optional[str] = None,
+        user_first_name: str | None = None,
+        current_date: str | None = None,
+        current_day: str | None = None,
     ) -> str:
         """Build system context based on current conversation state."""
         # User context section

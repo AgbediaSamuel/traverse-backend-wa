@@ -2,12 +2,10 @@
 Helper functions for planning itinerary structure based on user preferences.
 """
 
-from typing import Dict, List
-
 
 def calculate_daily_activities(
     pace_style: int, schedule_style: int, total_days: int
-) -> List[Dict[str, int]]:
+) -> list[dict[str, int]]:
     """
     Calculate how many activities should be in each day based on user preferences.
 
@@ -106,7 +104,7 @@ def get_activity_mix_guidance(
     return f"{day_note} {duration_mix} {schedule_guidance}"
 
 
-def map_interests_to_place_types(interests: List[str]) -> List[str]:
+def map_interests_to_place_types(interests: list[str]) -> list[str]:
     """
     Map user interest selections to Google Places types and search queries.
 
@@ -175,7 +173,7 @@ def map_interests_to_place_types(interests: List[str]) -> List[str]:
     return queries
 
 
-def get_budget_price_levels(budget_style: int) -> List[int]:
+def get_budget_price_levels(budget_style: int) -> list[int]:
     """
     Map budget style to Google Places price levels.
 

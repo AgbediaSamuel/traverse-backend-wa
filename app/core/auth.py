@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timedelta
-from typing import Optional
 
 from dotenv import load_dotenv
 from jose import JWTError, jwt
@@ -47,7 +46,7 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
     Create a JWT access token.
 
@@ -69,7 +68,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def verify_token(token: str) -> Optional[str]:
+def verify_token(token: str) -> str | None:
     """
     Verify and decode a JWT token.
 
@@ -106,7 +105,7 @@ def create_refresh_token(data: dict) -> str:
     return encoded_jwt
 
 
-def verify_refresh_token(token: str) -> Optional[str]:
+def verify_refresh_token(token: str) -> str | None:
     """
     Verify a refresh token.
 

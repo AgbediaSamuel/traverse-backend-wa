@@ -2,11 +2,11 @@
 Utility for aggregating preferences from multiple users for group trips.
 """
 
-from statistics import mean, median
-from typing import Any, Dict, List, Optional
+from statistics import median
+from typing import Any
 
 
-def aggregate_preferences(preferences_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+def aggregate_preferences(preferences_list: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Aggregate preferences from multiple users.
 
@@ -23,6 +23,7 @@ def aggregate_preferences(preferences_list: List[Dict[str, Any]]) -> Dict[str, A
             "pace_style": 50,
             "schedule_style": 50,
             "selected_interests": [],
+            "other_interests": [],  # NEW: Include empty list for other_interests
         }
 
     if len(preferences_list) == 1:
@@ -54,17 +55,25 @@ def aggregate_preferences(preferences_list: List[Dict[str, Any]]) -> Dict[str, A
     # Convert back to list and sort for consistency
     aggregated_interests = sorted(list(all_interests))
 
+    # Aggregate other_interests (collect all free-text other interests)
+    all_other_interests = []
+    for prefs in preferences_list:
+        other = prefs.get("other_interests")
+        if other and other.strip():
+            all_other_interests.append(other.strip())
+
     return {
         "budget_style": aggregated_budget,
         "pace_style": aggregated_pace,
         "schedule_style": aggregated_schedule,
         "selected_interests": aggregated_interests,
+        "other_interests": all_other_interests,  # NEW: Include other_interests for extraction
         "is_aggregated": True,
         "participant_count": len(preferences_list),
     }
 
 
-def get_preference_summary(aggregated_prefs: Dict[str, Any]) -> str:
+def get_preference_summary(aggregated_prefs: dict[str, Any]) -> str:
     """
     Generate a human-readable summary of aggregated preferences for LLM context.
 

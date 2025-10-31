@@ -1,6 +1,7 @@
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
 interface CoverPageProps {
+  tripName: string;
   travelerName: string;
   destination: string;
   duration: string;
@@ -10,7 +11,7 @@ interface CoverPageProps {
   participantCount?: number;
 }
 
-export function CoverPage({ travelerName, destination, duration, dates, coverImage, isGroupTrip, participantCount }: CoverPageProps) {
+export function CoverPage({ tripName, travelerName, destination, duration, dates, coverImage, isGroupTrip, participantCount, printMode = false }: CoverPageProps) {
   return (
     <div className="h-screen relative overflow-hidden bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
       {/* Background Image */}
@@ -34,28 +35,12 @@ export function CoverPage({ travelerName, destination, duration, dates, coverIma
               <span className="text-white font-semibold">Group Trip{typeof participantCount === 'number' ? ` · ${participantCount} ${participantCount === 1 ? 'Traveler' : 'Travelers'}` : ''}</span>
             </div>
           )}
-          {isGroupTrip ? (
-            <>
-              <h1 className="text-5xl mb-4 bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
-                {duration} in
+          <h1 className="text-5xl mb-6 bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
+            {tripName}
               </h1>
               <h2 className="text-5xl mb-8 text-yellow-300">
                 {destination}
               </h2>
-            </>
-          ) : (
-            <>
-              <h1 className="text-6xl mb-6 bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
-                {travelerName}'s
-              </h1>
-              <h2 className="text-4xl mb-4 text-white">
-                {duration}
-              </h2>
-              <h3 className="text-5xl mb-8 text-yellow-300">
-                {destination}
-              </h3>
-            </>
-          )}
           <div className="text-xl text-purple-200 mb-8">
             {dates}
           </div>

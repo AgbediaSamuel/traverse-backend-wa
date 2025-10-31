@@ -1,12 +1,12 @@
-from typing import List
-
 from fastapi import APIRouter, Header, HTTPException
 
 from app.core.repository import repo
 from app.core.schemas import (
     CalendarResponseSubmit,
+    FinalizeDatesRequest,
     InviteParticipantCreate,
     InviteParticipantUpdate,
+    ResendInvitesRequest,
     SendInvitesRequest,
     TripInviteCreate,
     TripInviteResponse,
@@ -46,7 +46,7 @@ async def create_trip_invite(
     return TripInviteResponse(**invite_doc)
 
 
-@router.get("/invites", response_model=List[TripInviteResponse])
+@router.get("/invites", response_model=list[TripInviteResponse])
 async def get_my_invites(x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id")):
     """Get all trip invites created by the authenticated user."""
     clerk_user_id = x_clerk_user_id
@@ -54,7 +54,7 @@ async def get_my_invites(x_clerk_user_id: str = Header(..., alias="X-Clerk-User-
     return [TripInviteResponse(**invite) for invite in invites]
 
 
-@router.get("/invites/received", response_model=List[TripInviteResponse])
+@router.get("/invites/received", response_model=list[TripInviteResponse])
 async def get_received_invites(x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id")):
     """Get all trip invites where the authenticated user is a participant."""
     clerk_user_id = x_clerk_user_id
@@ -286,6 +286,8 @@ async def respond_to_invite(
     x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
 ):
     """Submit availability response to a trip invite."""
+    from app.core.invite_utils import analyze_common_dates
+
     clerk_user_id = x_clerk_user_id
 
     # Get user email
@@ -312,6 +314,21 @@ async def respond_to_invite(
 
     if not success:
         raise HTTPException(status_code=500, detail="Failed to submit response")
+
+    # Trigger date analysis
+    updated_invite = repo.get_trip_invite(invite_id)
+    if updated_invite:
+        participants = updated_invite.get("participants", [])
+        analysis_results = analyze_common_dates(participants)
+
+        # Update invite with analysis results
+        repo.update_invite_date_analysis(
+            invite_id=invite_id,
+            calculated_start_date=analysis_results.get("calculated_start_date"),
+            calculated_end_date=analysis_results.get("calculated_end_date"),
+            no_common_dates=analysis_results.get("no_common_dates", False),
+            common_dates_percentage=analysis_results.get("common_dates_percentage"),
+        )
 
     return {
         "message": "Response submitted successfully",
@@ -354,4 +371,190 @@ async def mark_preferences_completed(
     return {
         "message": "Preferences marked as completed",
         "invite_id": invite_id,
+    }
+
+
+@router.post("/invites/{invite_id}/finalize-dates")
+async def finalize_invite_dates(
+    invite_id: str,
+    request_data: FinalizeDatesRequest,
+    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+):
+    """Finalize dates for a trip invite (organizer only)."""
+    clerk_user_id = x_clerk_user_id
+
+    # Get invite
+    invite = repo.get_trip_invite(invite_id)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Trip invite not found")
+
+    # Verify user is the organizer
+    if invite.get("organizer_clerk_id") != clerk_user_id:
+        raise HTTPException(status_code=403, detail="Only the organizer can finalize dates")
+
+    participants = invite.get("participants", [])
+    organizer_participant = next(
+        (p for p in participants if p.get("is_organizer")),
+        None,
+    )
+    non_organizer_participants = [p for p in participants if not p.get("is_organizer")]
+
+    # Organizer must submit availability
+    if not organizer_participant or organizer_participant.get("status") != "responded":
+        raise HTTPException(
+            status_code=400,
+            detail="Organizer must submit availability before finalizing dates",
+        )
+
+    if non_organizer_participants:
+        if any(p.get("status") != "responded" for p in non_organizer_participants):
+            raise HTTPException(
+                status_code=400,
+                detail="All participants must respond before finalizing dates",
+            )
+
+        if invite.get("collect_preferences") and any(
+            not p.get("has_completed_preferences") for p in non_organizer_participants
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="All participants must complete preferences before finalizing dates",
+            )
+
+    # Determine which dates to use
+    if request_data.use_common:
+        # Use calculated common dates
+        start_date = invite.get("calculated_start_date")
+        end_date = invite.get("calculated_end_date")
+
+        if not start_date or not end_date:
+            raise HTTPException(
+                status_code=400,
+                detail="No common dates available. Please use your own dates instead.",
+            )
+
+        finalized_by = "common"
+    else:
+        # Use organizer's dates (from their participant record)
+        organizer_email = invite.get("organizer_email")
+        organizer_record = next(
+            (
+                p
+                for p in participants
+                if p.get("email") == organizer_email and p.get("is_organizer")
+            ),
+            None,
+        )
+
+        if not organizer_record or not organizer_record.get("available_dates"):
+            raise HTTPException(
+                status_code=400, detail="Organizer must submit their availability first"
+            )
+
+        # Use first and last date from organizer's availability
+        organizer_dates = sorted(organizer_record["available_dates"])
+        start_date = organizer_dates[0]
+        end_date = organizer_dates[-1]
+        finalized_by = "organizer"
+
+    # Finalize the dates
+    success = repo.finalize_invite_dates(
+        invite_id=invite_id,
+        finalized_start_date=start_date,
+        finalized_end_date=end_date,
+        dates_finalized_by=finalized_by,
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to finalize dates")
+
+    return {
+        "message": "Dates finalized successfully",
+        "invite_id": invite_id,
+        "finalized_start_date": start_date,
+        "finalized_end_date": end_date,
+        "dates_finalized_by": finalized_by,
+    }
+
+
+@router.post("/invites/{invite_id}/resend")
+async def resend_invites(
+    invite_id: str,
+    request_data: ResendInvitesRequest,
+    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+):
+    """Resend invites to selected participants (organizer only)."""
+    from app.core.email_service import send_trip_invite_email
+
+    clerk_user_id = x_clerk_user_id
+
+    # Get invite
+    invite = repo.get_trip_invite(invite_id)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Trip invite not found")
+
+    # Verify user is the organizer
+    if invite.get("organizer_clerk_id") != clerk_user_id:
+        raise HTTPException(status_code=403, detail="Only the organizer can resend invites")
+
+    # Verify all emails are participants (not organizer)
+    participant_emails = [
+        p["email"] for p in invite.get("participants", []) if not p.get("is_organizer")
+    ]
+
+    for email in request_data.participant_emails:
+        if email not in participant_emails:
+            raise HTTPException(status_code=400, detail=f"Email {email} is not a valid participant")
+
+    # Reset participants
+    success = repo.reset_participants_for_resend(
+        invite_id=invite_id,
+        participant_emails=request_data.participant_emails,
+    )
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to reset participants")
+
+    # Send new invite emails
+    organizer_name = invite.get("organizer_name", "Trip Organizer")
+    trip_name = invite.get("trip_name", "Group Trip")
+
+    sent_count = 0
+    failed_emails = []
+
+    for email in request_data.participant_emails:
+        try:
+            send_trip_invite_email(
+                to_email=email,
+                invite_id=invite_id,
+                organizer_name=organizer_name,
+                trip_name=trip_name,
+            )
+            sent_count += 1
+        except Exception as e:
+            print(f"Failed to send email to {email}: {e}")
+            failed_emails.append(email)
+
+    # Recalculate date analysis after resend
+    from app.core.invite_utils import analyze_common_dates
+
+    updated_invite = repo.get_trip_invite(invite_id)
+    if updated_invite:
+        participants = updated_invite.get("participants", [])
+        analysis_results = analyze_common_dates(participants)
+
+        repo.update_invite_date_analysis(
+            invite_id=invite_id,
+            calculated_start_date=analysis_results.get("calculated_start_date"),
+            calculated_end_date=analysis_results.get("calculated_end_date"),
+            no_common_dates=analysis_results.get("no_common_dates", False),
+            common_dates_percentage=analysis_results.get("common_dates_percentage"),
+        )
+
+    return {
+        "message": f"Invites resent to {sent_count} participant(s)",
+        "invite_id": invite_id,
+        "sent_count": sent_count,
+        "failed_count": len(failed_emails),
+        "failed_emails": failed_emails,
     }

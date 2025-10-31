@@ -7,6 +7,7 @@ import { NavigationControls } from './components/NavigationControls';
 import { endpoints } from './config';
 
 const defaultItineraryData = {
+  tripName: "Vegas Weekend",
   traveler: "Sheriff",
   destination: "Las Vegas",
   duration: "Three Day Weekend",
@@ -103,13 +104,14 @@ const defaultItineraryData = {
 export default function App() {
   const [currentPage, setCurrentPage] = useState(0);
   const [data, setData] = useState(defaultItineraryData);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Map backend document shape to this template's shape
   function mapDocumentToTemplate(doc: any) {
     const placeholderImg = 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1200&auto=format&fit=crop';
     return {
+      tripName: doc.trip_name ?? 'Trip',
       traveler: doc.traveler_name ?? 'Traveler',
       destination: doc.destination ?? 'Destination',
       duration: doc.duration ?? 'Trip',
@@ -135,7 +137,10 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const itineraryId = params.get('itineraryId');
-    if (!itineraryId) return; // stay on default data
+    if (!itineraryId) {
+      setLoading(false);
+      return; // stay on default data
+    }
 
     setLoading(true);
     setError(null);
@@ -175,6 +180,7 @@ export default function App() {
     if (currentPage === 0) {
       return (
         <CoverPage
+          tripName={data.tripName}
           travelerName={data.traveler}
           destination={data.destination}
           duration={data.duration}
@@ -219,8 +225,16 @@ export default function App() {
   return (
     <div className="relative">
       {loading && (
-        <div className="fixed inset-0 flex items-center justify-center z-50">
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl p-4 shadow">Loading itinerary…</div>
+        <div className="fixed inset-0 flex items-center justify-center z-50 bg-white">
+          <div className="flex flex-col items-center gap-4 rounded-3xl border border-green-100 bg-white px-8 py-10 shadow-2xl">
+            <div className="h-12 w-12 rounded-full border-4 border-green-200 border-t-green-500 animate-spin" />
+            <div className="text-center">
+              <p className="text-lg font-semibold text-gray-900">Preparing your itinerary</p>
+              <p className="text-sm text-gray-500 mt-1 max-w-xs">
+                We&apos;re loading the latest recommendations so everything looks perfect.
+              </p>
+            </div>
+          </div>
         </div>
       )}
       {error && (

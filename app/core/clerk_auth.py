@@ -1,8 +1,7 @@
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
-from fastapi import HTTPException, status
 from jose import JWTError, jwt
 
 # Clerk configuration
@@ -18,7 +17,7 @@ class ClerkAuth:
         if not CLERK_SECRET_KEY:
             raise ValueError("CLERK_SECRET_KEY environment variable is required")
 
-    async def verify_clerk_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def verify_clerk_token(self, token: str) -> dict[str, Any] | None:
         """
         Verify a Clerk JWT token and return user information
 
@@ -52,7 +51,7 @@ class ClerkAuth:
             print(f"Token verification error: {e}")
             return None
 
-    async def get_clerk_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_clerk_user_info(self, user_id: str) -> dict[str, Any] | None:
         """
         Fetch user information from Clerk API
 
@@ -82,7 +81,7 @@ class ClerkAuth:
             print(f"Error fetching user from Clerk: {e}")
             return None
 
-    def extract_user_data(self, clerk_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_user_data(self, clerk_payload: dict[str, Any]) -> dict[str, Any]:
         """
         Extract standardized user data from Clerk token payload
 

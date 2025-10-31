@@ -1,10 +1,9 @@
-from typing import Optional
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.auth import verify_token
 from app.core.repository import repo
 from app.core.schemas import User
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 # HTTP Bearer token security scheme
 security = HTTPBearer()
@@ -76,8 +75,8 @@ async def get_current_active_user(
 
 
 def get_optional_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> Optional[User]:
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> User | None:
     """
     Dependency to optionally get the current user (for routes that work with or without auth).
 

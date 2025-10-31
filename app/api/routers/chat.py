@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime
-from typing import Dict, List, Optional
 
 import httpx
 from app.core.conversation_manager import ConversationManager, ConversationState
@@ -19,9 +18,9 @@ class ChatMessage(BaseModel):
 
 class ChatSession(BaseModel):
     id: str
-    user_id: Optional[str] = None
-    trip_type: Optional[str] = Field(None, pattern="^(solo|group)$")
-    messages: List[ChatMessage] = Field(default_factory=list)
+    user_id: str | None = None
+    trip_type: str | None = Field(None, pattern="^(solo|group)$")
+    messages: list[ChatMessage] = Field(default_factory=list)
     conversation_state: ConversationState = Field(default_factory=ConversationState)
 
 
@@ -31,14 +30,14 @@ class MessageRequest(BaseModel):
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-_SESSIONS: Dict[str, ChatSession] = {}
+_SESSIONS: dict[str, ChatSession] = {}
 _conversation_manager = ConversationManager()
 
 
 @router.get("/sessions/active")
 def get_active_session(
-    clerk_user_id: str, trip_type: Optional[str] = None, request: Request = None
-) -> Dict[str, object]:
+    clerk_user_id: str, trip_type: str | None = None, request: Request = None
+) -> dict[str, object]:
     """
     Get or create the active chat session for a user.
     This ensures each user only has one active session at a time.
@@ -68,7 +67,7 @@ def get_active_session(
 
 
 @router.post("/sessions")
-def create_session(user_id: Optional[str] = None, request: Request = None) -> Dict[str, str]:
+def create_session(user_id: str | None = None, request: Request = None) -> dict[str, str]:
     """Legacy endpoint - deprecated in favor of /sessions/active"""
     sid = f"sess_{uuid.uuid4().hex[:12]}"
     session = ChatSession(id=sid, user_id=user_id)
@@ -78,7 +77,7 @@ def create_session(user_id: Optional[str] = None, request: Request = None) -> Di
 
 
 @router.get("/sessions/{session_id}")
-def get_session(session_id: str, request: Request) -> Dict[str, object]:
+def get_session(session_id: str, request: Request) -> dict[str, object]:
     session = _SESSIONS.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
@@ -86,11 +85,10 @@ def get_session(session_id: str, request: Request) -> Dict[str, object]:
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str, request: Request) -> Dict[str, str]:
+def delete_session(session_id: str, request: Request) -> dict[str, str]:
     """Delete a session from memory and database."""
     # Remove from memory
-    if session_id in _SESSIONS:
-        del _SESSIONS[session_id]
+    _SESSIONS.pop(session_id, None)
 
     # Delete from database
     try:
@@ -189,8 +187,7 @@ async def post_message(
                     request.app.state.repo.finalize_session(session_id, itinerary_id)
 
                     # Clear old session from memory
-                    if session_id in _SESSIONS:
-                        del _SESSIONS[session_id]
+                    _SESSIONS.pop(session_id, None)
 
                     itinerary_generated = True
 
@@ -225,7 +222,7 @@ async def post_message(
 
 
 @router.post("/sessions/{session_id}/finalize")
-async def finalize(session_id: str, request: Request) -> Dict[str, object]:
+async def finalize(session_id: str, request: Request) -> dict[str, object]:
     """
     Finalize the current session by:
     1. Generating the itinerary
@@ -273,8 +270,7 @@ async def finalize(session_id: str, request: Request) -> Dict[str, object]:
             new_session_id = request.app.state.repo.finalize_session(session_id, itinerary_id)
 
             # Clear old session from memory
-            if session_id in _SESSIONS:
-                del _SESSIONS[session_id]
+            _SESSIONS.pop(session_id, None)
 
             itinerary_url = f"http://localhost:5174/?itineraryId={itinerary_id}"
 
@@ -297,12 +293,12 @@ async def finalize(session_id: str, request: Request) -> Dict[str, object]:
 
 
 @router.get("/sessions")
-def list_sessions(request: Request) -> Dict[str, object]:
+def list_sessions(request: Request) -> dict[str, object]:
     return {"sessions": list(request.app.state.repo.sessions.values())}
 
 
 @router.get("/sessions/{session_id}/itinerary")
-def get_session_itinerary(session_id: str, request: Request) -> Dict[str, object]:
+def get_session_itinerary(session_id: str, request: Request) -> dict[str, object]:
     data = request.app.state.repo.get_session(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="session not found")
