@@ -76,21 +76,6 @@ class UserBase(BaseModel):
     full_name: str | None = None
 
 
-class UserCreate(UserBase):
-    """Schema for user registration."""
-
-    password: str = Field(
-        ..., min_length=8, description="Password must be at least 8 characters"
-    )
-
-
-class UserLogin(BaseModel):
-    """Schema for user login."""
-
-    email: EmailStr
-    password: str
-
-
 class UserUpdate(BaseModel):
     """Schema for updating user information."""
 
@@ -191,96 +176,6 @@ class User(UserBase):
         from_attributes = True
 
 
-class UserInDB(User):
-    """User model as stored in database (includes hashed password)."""
-
-    hashed_password: str
-
-
-# =============================================================================
-# Authentication Response Schemas
-# =============================================================================
-
-
-class Token(BaseModel):
-    """JWT token response."""
-
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int  # seconds
-
-
-class TokenData(BaseModel):
-    """Token payload data."""
-
-    email: str | None = None
-    scopes: list[str] = Field(default_factory=list)
-
-
-class RefreshToken(BaseModel):
-    """Refresh token request."""
-
-    refresh_token: str
-
-
-class PasswordReset(BaseModel):
-    """Password reset request."""
-
-    email: EmailStr
-
-
-class PasswordResetConfirm(BaseModel):
-    """Password reset confirmation."""
-
-    token: str
-    new_password: str = Field(..., min_length=8)
-
-
-# =============================================================================
-# Chat Session Schemas
-# =============================================================================
-
-
-class ChatSessionBase(BaseModel):
-    """Base chat session model."""
-
-    clerk_user_id: str
-    trip_type: str | None = Field(
-        None, pattern="^(solo|group)$", description="Type of trip: solo or group"
-    )
-
-
-class ChatSessionCreate(ChatSessionBase):
-    """Schema for creating a chat session."""
-
-    pass
-
-
-class ChatSessionResponse(BaseModel):
-    """Chat session returned by API."""
-
-    id: str
-    clerk_user_id: str
-    trip_type: str | None = Field(None, pattern="^(solo|group)$")
-    status: str = Field(default="active", pattern="^(active|finalized)$")
-    itinerary_id: str | None = None
-    created_at: datetime
-    updated_at: datetime
-    messages: list[dict] = Field(default_factory=list)
-
-    class Config:
-        from_attributes = True
-
-
-class FinalizeSessionResponse(BaseModel):
-    """Response from finalizing a session."""
-
-    message: str
-    itinerary_id: str
-    new_session_id: str
-    itinerary_url: str
-
-
 # =============================================================================
 # Calendar & Trip Invite Schemas
 # =============================================================================
@@ -322,7 +217,9 @@ class InviteParticipantResponse(InviteParticipantBase):
         default="pending",
         pattern="^(pending|invited|responded|declined|preferences_completed)$",
     )
-    available_dates: list[str] | None = Field(default_factory=list, description="ISO date strings")
+    available_dates: list[str] | None = Field(
+        default_factory=list, description="ISO date strings"
+    )
     has_completed_preferences: bool = Field(
         default=False, description="Whether participant has completed their preferences"
     )
@@ -349,8 +246,12 @@ class TripInviteBase(BaseModel):
     )
 
     # Finalized dates (set by organizer)
-    finalized_start_date: str | None = Field(None, description="Finalized start date for the trip")
-    finalized_end_date: str | None = Field(None, description="Finalized end date for the trip")
+    finalized_start_date: str | None = Field(
+        None, description="Finalized start date for the trip"
+    )
+    finalized_end_date: str | None = Field(
+        None, description="Finalized end date for the trip"
+    )
     dates_finalized_by: str | None = Field(
         None, pattern="^(common|organizer)$", description="How dates were finalized"
     )
@@ -366,8 +267,12 @@ class TripInviteBase(BaseModel):
     collect_preferences: bool = Field(
         default=False, description="Whether to collect preferences from participants"
     )
-    trip_type: str = Field(default="group", pattern="^(solo|group)$", description="Type of trip")
-    cover_image: str | None = Field(None, description="Proxied cover image URL for the destination")
+    trip_type: str = Field(
+        default="group", pattern="^(solo|group)$", description="Type of trip"
+    )
+    cover_image: str | None = Field(
+        None, description="Proxied cover image URL for the destination"
+    )
     itinerary_id: str | None = Field(
         None, description="ID of the itinerary created from this invite"
     )

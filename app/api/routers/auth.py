@@ -1,5 +1,3 @@
-from typing import Optional
-
 from app.core.repository import repo
 from app.core.schemas import (
     ClerkUserSync,

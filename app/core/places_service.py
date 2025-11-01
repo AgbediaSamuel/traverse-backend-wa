@@ -38,7 +38,9 @@ class PlacesService:
         geocode_params = {"address": location, "key": self.api_key}
 
         try:
-            geocode_response = requests.get(geocode_url, params=geocode_params, timeout=10)
+            geocode_response = requests.get(
+                geocode_url, params=geocode_params, timeout=10
+            )
             geocode_response.raise_for_status()
             geocode_data = geocode_response.json()
 
@@ -257,7 +259,9 @@ class PlacesService:
             print(f"Error getting place details: {e}")
             return None
 
-    def get_place_photo_url(self, photo_reference: str, max_width: int = 1080) -> str | None:
+    def get_place_photo_url(
+        self, photo_reference: str, max_width: int = 1080
+    ) -> str | None:
         """
         Get a photo URL from a photo reference.
 
@@ -338,11 +342,15 @@ class PlacesService:
                     add_part(main_text)
 
                 if secondary_text:
-                    segments = [seg.strip() for seg in secondary_text.split(",") if seg.strip()]
+                    segments = [
+                        seg.strip() for seg in secondary_text.split(",") if seg.strip()
+                    ]
                     if segments:
                         add_part(segments[-1])
                 elif description:
-                    segments = [seg.strip() for seg in description.split(",") if seg.strip()]
+                    segments = [
+                        seg.strip() for seg in description.split(",") if seg.strip()
+                    ]
                     if len(segments) >= 2:
                         add_part(segments[-1])
 
@@ -438,7 +446,9 @@ class PlacesService:
             for query in extracted_queries:
                 if query and query.strip():
                     all_queries.append(query.strip())
-            print(f"[PlacesService] Added {len(extracted_queries)} extracted queries to search")
+            print(
+                f"[PlacesService] Added {len(extracted_queries)} extracted queries to search"
+            )
 
         # Always include broader categories upfront (not as fallback)
         all_queries.extend(
