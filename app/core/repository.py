@@ -6,8 +6,13 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from app.core.schemas import (ClerkUserSync, ItineraryDocument, User,
-                              UserPreferences, UserPreferencesCreate)
+from app.core.schemas import (
+    ClerkUserSync,
+    ItineraryDocument,
+    User,
+    UserPreferences,
+    UserPreferencesCreate,
+)
 from dotenv import load_dotenv
 from pymongo import MongoClient
 

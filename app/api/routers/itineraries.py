@@ -132,8 +132,10 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
     """
     from datetime import datetime, timedelta
 
-    from app.core.itinerary_planner import (calculate_daily_activities,
-                                            get_budget_price_levels)
+    from app.core.itinerary_planner import (
+        calculate_daily_activities,
+        get_budget_price_levels,
+    )
     from app.core.preference_aggregator import aggregate_preferences
     from pydantic import HttpUrl
 

@@ -27,8 +27,7 @@ if os.path.basename(repo_root) not in {"tests", "unit", "integration"}:
 # Load environment variables
 load_dotenv()
 
-from app.core.clerk_auth import (CLERK_JWT_KEY, CLERK_SECRET_KEY, ClerkAuth,
-                                 clerk_auth)
+from app.core.clerk_auth import CLERK_JWT_KEY, CLERK_SECRET_KEY, ClerkAuth, clerk_auth
 
 
 def test_environment_variables():
