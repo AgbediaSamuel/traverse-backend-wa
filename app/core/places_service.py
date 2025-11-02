@@ -3,7 +3,9 @@ Google Places API integration for fetching venue data and photos.
 """
 
 import os
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any
+from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
@@ -22,7 +24,7 @@ class PlacesService:
             raise ValueError("GOOGLE_MAPS_API_KEY not found in environment variables")
         self.api_key = GOOGLE_MAPS_API_KEY
 
-    def geocode_location(self, location: str) -> Optional[Dict[str, float]]:
+    def geocode_location(self, location: str) -> dict[str, float] | None:
         """
         Geocode a location string to latitude/longitude coordinates.
 
@@ -36,7 +38,9 @@ class PlacesService:
         geocode_params = {"address": location, "key": self.api_key}
 
         try:
-            geocode_response = requests.get(geocode_url, params=geocode_params, timeout=10)
+            geocode_response = requests.get(
+                geocode_url, params=geocode_params, timeout=10
+            )
             geocode_response.raise_for_status()
             geocode_data = geocode_response.json()
 
@@ -59,11 +63,12 @@ class PlacesService:
         location: str,
         query: str,
         radius: int = 5000,
-        min_rating: Optional[float] = None,
-        price_level: Optional[List[int]] = None,
+        min_rating: float | None = None,
+        price_level: list[int] | None = None,
         require_photo: bool = False,
-        allowed_types: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        allowed_types: list[str] | None = None,
+        max_pages: int = 1,
+    ) -> list[dict[str, Any]]:
         """
         Search for places using Text Search API.
 
@@ -104,30 +109,9 @@ class PlacesService:
 
         # Now search for places near those coordinates
         search_url = f"{PLACES_API_BASE}/textsearch/json"
-        search_params = {
-            "query": query,  # Simplified - just the query
-            "location": f"{lat},{lng}",
-            "radius": radius,
-            "key": self.api_key,
-        }
 
-        try:
-            response = requests.get(
-                search_url,
-                params=search_params,
-                timeout=10,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            if data.get("status") != "OK":
-                print(f"Places search failed: {data.get('status')}")
-                return []
-
-            results = data.get("results", [])
-
-            # Filter by optional rating/price level/photo/type
-            filtered_results = []
+        def filter_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            filtered: list[dict[str, Any]] = []
             for place in results:
                 # Check rating if requested
                 if min_rating is not None and place.get("rating", 0) < min_rating:
@@ -153,7 +137,16 @@ class PlacesService:
                     if not any(t in allowed_types for t in place_types):
                         continue
 
-                filtered_results.append(
+                # Extract coordinates from geometry.location
+                lat = None
+                lng = None
+                geometry = place.get("geometry")
+                if geometry and geometry.get("location"):
+                    location = geometry["location"]
+                    lat = location.get("lat")
+                    lng = location.get("lng")
+
+                filtered.append(
                     {
                         "place_id": place.get("place_id"),
                         "name": place.get("name"),
@@ -166,16 +159,65 @@ class PlacesService:
                             if place.get("photos")
                             else None
                         ),
+                        "lat": lat,
+                        "lng": lng,
                     }
                 )
+            return filtered
 
-            return filtered_results
+        try:
+            collected: list[dict[str, Any]] = []
+            pages_fetched = 0
+            next_token: str | None = None
+
+            while True:
+                params: dict[str, Any]
+                if next_token:
+                    # When using next_page_token, only send token + key
+                    params = {
+                        "pagetoken": next_token,
+                        "key": self.api_key,
+                    }
+                else:
+                    params = {
+                        "query": query,
+                        "location": f"{lat},{lng}",
+                        "radius": radius,
+                        "key": self.api_key,
+                    }
+
+                response = requests.get(search_url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                status = data.get("status")
+                if status not in ("OK", "ZERO_RESULTS"):
+                    # When token not ready, Google returns INVALID_REQUEST briefly
+                    if status == "INVALID_REQUEST" and next_token:
+                        time.sleep(2)
+                        continue
+                    print(f"Places search failed: {status}")
+                    break
+
+                results = data.get("results", [])
+                collected.extend(filter_results(results))
+
+                pages_fetched += 1
+                next_token = data.get("next_page_token")
+
+                if not next_token or pages_fetched >= max_pages:
+                    break
+
+                # Per Google docs, next_page_token requires a short wait
+                time.sleep(2)
+
+            return collected
 
         except Exception as e:
             print(f"Error searching places: {e}")
             return []
 
-    def get_place_details(self, place_id: str) -> Optional[Dict[str, Any]]:
+    def get_place_details(self, place_id: str) -> dict[str, Any] | None:
         """
         Get detailed information about a specific place.
 
@@ -206,6 +248,15 @@ class PlacesService:
 
             result = data.get("result", {})
 
+            # Extract coordinates from geometry.location
+            lat = None
+            lng = None
+            geometry = result.get("geometry")
+            if geometry and geometry.get("location"):
+                location = geometry["location"]
+                lat = location.get("lat")
+                lng = location.get("lng")
+
             result_dict = {
                 "place_id": place_id,
                 "name": result.get("name"),
@@ -219,6 +270,8 @@ class PlacesService:
                     if result.get("photos")
                     else None
                 ),
+                "lat": lat,
+                "lng": lng,
             }
             opening = result.get("opening_hours", {})
             result_dict["opening_hours"] = opening.get("weekday_text", [])
@@ -228,7 +281,9 @@ class PlacesService:
             print(f"Error getting place details: {e}")
             return None
 
-    def get_place_photo_url(self, photo_reference: str, max_width: int = 1080) -> Optional[str]:
+    def get_place_photo_url(
+        self, photo_reference: str, max_width: int = 1080
+    ) -> str | None:
         """
         Get a photo URL from a photo reference.
 
@@ -249,7 +304,22 @@ class PlacesService:
             f"&key={self.api_key}"
         )
 
-    def autocomplete_places(self, query: str, limit: int = 6) -> List[Dict[str, Any]]:
+    def get_proxy_photo_url(
+        self, photo_reference: str, base_url: str, max_width: int = 1080
+    ) -> str | None:
+        """Build absolute URL to backend photo proxy.
+
+        Args:
+            photo_reference: Google Places photo_reference
+            base_url: Request base URL (e.g., "http://localhost:8765/")
+            max_width: Desired width
+        """
+        if not photo_reference or not base_url:
+            return None
+        base = base_url.rstrip("/")
+        return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
+
+    def autocomplete_places(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         """Return lightweight autocomplete suggestions for destinations.
 
         Uses Places Autocomplete API. Falls back to geocode when needed.
@@ -267,9 +337,54 @@ class PlacesService:
             if data.get("status") != "OK":
                 return []
             preds = data.get("predictions", [])[:limit]
+
+            def build_display_name(prediction: dict[str, Any]) -> str:
+                description = prediction.get("description") or ""
+                structured = prediction.get("structured_formatting") or {}
+                main_text = (structured.get("main_text") or "").strip()
+                secondary_text = (structured.get("secondary_text") or "").strip()
+
+                if not main_text and description:
+                    main_text = description.split(",")[0].strip()
+
+                display_parts: list[str] = []
+                seen_parts: set[str] = set()
+
+                def add_part(part: str) -> None:
+                    cleaned = part.strip()
+                    if not cleaned:
+                        return
+                    lowered = cleaned.lower()
+                    if lowered in seen_parts:
+                        return
+                    display_parts.append(cleaned)
+                    seen_parts.add(lowered)
+
+                if main_text:
+                    add_part(main_text)
+
+                if secondary_text:
+                    segments = [
+                        seg.strip() for seg in secondary_text.split(",") if seg.strip()
+                    ]
+                    if segments:
+                        add_part(segments[-1])
+                elif description:
+                    segments = [
+                        seg.strip() for seg in description.split(",") if seg.strip()
+                    ]
+                    if len(segments) >= 2:
+                        add_part(segments[-1])
+
+                if not display_parts and description:
+                    return description
+
+                return ", ".join(display_parts)
+
             return [
                 {
                     "description": p.get("description"),
+                    "display_name": build_display_name(p),
                     "place_id": p.get("place_id"),
                     "types": p.get("types", []),
                 }
@@ -282,14 +397,16 @@ class PlacesService:
     def search_by_preferences(
         self,
         destination: str,
-        user_interests: List[str],
+        user_interests: list[str],
         budget_style: int,
         max_results: int = 30,
         *,
-        min_rating: Optional[float] = None,
+        min_rating: float | None = None,
         require_photo: bool = False,
-        allowed_types: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        allowed_types: list[str] | None = None,
+        extracted_queries: list[str] | None = None,
+        extracted_place_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for places based on user preferences.
 
@@ -298,6 +415,8 @@ class PlacesService:
             user_interests: List of user's selected interests
             budget_style: Budget preference (0-100)
             max_results: Maximum number of results to return
+            extracted_queries: Optional list of extracted search queries from NLP
+            extracted_place_types: Optional list of extracted Google Places types from NLP
 
         Returns:
             List of places matching user preferences
@@ -336,13 +455,22 @@ class PlacesService:
         all_places = []
         seen_place_ids = set()
 
-        # Build comprehensive query list: user interests + general categories upfront
+        # Build comprehensive query list: user interests + extracted queries + general categories
         all_queries = []
 
         # Add user-specific interests
         for interest in user_interests:
             query = interest_to_query.get(interest, interest.lower())
             all_queries.append(query)
+
+        # NEW: Add extracted queries from NLP (other_interests/vibe_notes)
+        if extracted_queries:
+            for query in extracted_queries:
+                if query and query.strip():
+                    all_queries.append(query.strip())
+            print(
+                f"[PlacesService] Added {len(extracted_queries)} extracted queries to search"
+            )
 
         # Always include broader categories upfront (not as fallback)
         all_queries.extend(
@@ -368,6 +496,42 @@ class PlacesService:
                 "stadium",
                 "premise",
             ]
+
+        # NEW: Merge extracted place types with allowed_types
+        if extracted_place_types:
+            # Filter to valid Google Places types
+            valid_types = [
+                "tourist_attraction",
+                "museum",
+                "art_gallery",
+                "restaurant",
+                "cafe",
+                "bar",
+                "night_club",
+                "park",
+                "beach",
+                "spa",
+                "shopping_mall",
+                "theater",
+                "stadium",
+                "zoo",
+                "aquarium",
+                "amusement_park",
+                "church",
+                "temple",
+                "mosque",
+                "landmark",
+                "point_of_interest",
+                "natural_feature",
+            ]
+            for ext_type in extracted_place_types:
+                if ext_type.lower() in valid_types and ext_type.lower() not in [
+                    t.lower() for t in allowed_types
+                ]:
+                    allowed_types.append(ext_type.lower())
+            print(
+                f"[PlacesService] Added {len(extracted_place_types)} extracted place types to filter"
+            )
 
         # Search all queries and deduplicate
         for query in all_queries:

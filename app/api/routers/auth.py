@@ -1,5 +1,3 @@
-from typing import Optional
-
 from app.core.repository import repo
 from app.core.schemas import (
     ClerkUserSync,
@@ -28,7 +26,7 @@ async def create_or_update_user(user_data: ClerkUserSync):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create/update user: {str(e)}",
+            detail=f"Failed to create/update user: {e!s}",
         )
 
 
@@ -77,7 +75,7 @@ async def delete_user(clerk_user_id: str):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete user: {str(e)}",
+            detail=f"Failed to delete user: {e!s}",
         )
 
 
@@ -104,7 +102,7 @@ async def update_user_onboarding(clerk_user_id: str, onboarding_data: Onboarding
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update onboarding status: {str(e)}",
+            detail=f"Failed to update onboarding status: {e!s}",
         )
 
 
@@ -131,7 +129,7 @@ async def save_user_preferences(clerk_user_id: str, preferences: UserPreferences
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save preferences: {str(e)}",
+            detail=f"Failed to save preferences: {e!s}",
         )
 
 
@@ -153,7 +151,7 @@ async def get_user_preferences(clerk_user_id: str):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get preferences: {str(e)}",
+            detail=f"Failed to get preferences: {e!s}",
         )
 
 

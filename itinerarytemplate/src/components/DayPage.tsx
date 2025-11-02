@@ -1,5 +1,5 @@
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { Clock, MapPin } from 'lucide-react';
+import { Clock, MapPin, ArrowDown } from 'lucide-react';
 
 interface Activity {
   time: string;
@@ -7,6 +7,7 @@ interface Activity {
   location: string;
   description: string;
   image: string;
+  distance_to_next?: number | null;
 }
 
 interface DayPageProps {
@@ -20,8 +21,8 @@ export function DayPage({ dayNumber, date, activities }: DayPageProps) {
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl mb-2 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+        <div className="text-center mb-12" style={{ overflow: 'visible' }}>
+          <h1 className="text-5xl mb-4 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent" style={{ lineHeight: '1.2', paddingBottom: '0.15em' }}>
             Day {dayNumber}
           </h1>
           <p className="text-xl text-gray-600">{date}</p>
@@ -30,7 +31,8 @@ export function DayPage({ dayNumber, date, activities }: DayPageProps) {
         {/* Activities */}
         <div className="space-y-8 mb-12">
           {activities.map((activity, index) => (
-            <div key={index} className="relative">
+            <div key={index}>
+              <div className="relative">
               {/* Timeline line */}
               {index < activities.length - 1 && (
                 <div className="absolute left-6 top-16 w-0.5 h-20 bg-gradient-to-b from-slate-200 to-slate-300 z-0"></div>
@@ -45,20 +47,15 @@ export function DayPage({ dayNumber, date, activities }: DayPageProps) {
                       alt={activity.title}
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
-                    <div className="absolute bottom-4 left-4 text-white">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <div className="w-8 h-8 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center">
-                          <Clock className="w-4 h-4" />
-                        </div>
-                        <span className="text-sm font-medium">{activity.time}</span>
-                      </div>
-                    </div>
                   </div>
                   
                   {/* Content below image */}
                   <div className="pt-2">
                     <h3 className="text-xl mb-2 text-gray-800">{activity.title}</h3>
+                    <div className="flex items-center text-gray-600 mb-2">
+                      <Clock className="w-4 h-4 mr-2" />
+                      <span className="text-sm font-medium">{activity.time}</span>
+                    </div>
                     <div className="flex items-center text-gray-600 mb-3">
                       <MapPin className="w-4 h-4 mr-1" />
                       <span className="text-sm">{activity.location}</span>
@@ -67,6 +64,19 @@ export function DayPage({ dayNumber, date, activities }: DayPageProps) {
                   </div>
                 </div>
               </div>
+              </div>
+              
+              {/* Distance to next activity */}
+              {activity.distance_to_next !== null && activity.distance_to_next !== undefined && index < activities.length - 1 && (
+                <div className="flex justify-center items-center mt-8">
+                  <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-50 border border-slate-200">
+                    <ArrowDown className="w-4 h-4 text-blue-600" strokeWidth={2.5} />
+                    <span className="text-sm font-medium text-blue-600">
+                      {activity.distance_to_next} km ({Math.round(activity.distance_to_next * 0.621371 * 10) / 10} mi)
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>

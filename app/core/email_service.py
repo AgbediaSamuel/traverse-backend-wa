@@ -1,0 +1,324 @@
+"""Email service using Resend API."""
+
+import os
+from typing import Optional
+
+import resend
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Initialize Resend with API key
+resend.api_key = os.getenv("RESEND_API_KEY", "")
+
+
+class EmailService:
+    """Service for sending emails via Resend."""
+
+    def __init__(
+        self, api_key: Optional[str] = None, sender_email: Optional[str] = None
+    ):
+        """
+        Initialize email service with optional API key override.
+
+        Args:
+            api_key: Resend API key (defaults to RESEND_API_KEY env var)
+            sender_email: Sender email address (defaults to RESEND_SENDER_EMAIL env var or onboarding@resend.dev for testing)
+        """
+        if api_key:
+            resend.api_key = api_key
+
+        # Use provided sender email, or fall back to env var, or use Resend's test domain
+        self.sender_email = sender_email or os.getenv(
+            "RESEND_SENDER_EMAIL", "onboarding@resend.dev"
+        )
+
+    def send_trip_invite(
+        self,
+        recipient_email: str,
+        recipient_name: str,
+        organizer_name: str,
+        trip_name: str,
+        destination: Optional[str] = None,
+        date_range_start: Optional[str] = None,
+        date_range_end: Optional[str] = None,
+        custom_message: Optional[str] = None,
+        invite_link: str = "",
+    ) -> bool:
+        """
+        Send a trip invite email to a participant.
+
+        Args:
+            recipient_email: Email address of the participant
+            recipient_name: Full name of the participant
+            organizer_name: Name of the trip organizer
+            trip_name: Name of the trip
+            destination: Trip destination (optional)
+            date_range_start: Start date of the trip (optional)
+            date_range_end: End date of the trip (optional)
+            custom_message: Custom message from organizer (optional)
+            invite_link: Link to respond to the invite
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        try:
+            # Build the email HTML content
+            html_content = self._build_invite_email_html(
+                recipient_name=recipient_name,
+                organizer_name=organizer_name,
+                trip_name=trip_name,
+                destination=destination,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+                custom_message=custom_message,
+                invite_link=invite_link,
+            )
+
+            # Send email via Resend
+            params = {
+                "from": "Traverse <app@traverse-hq.com>",
+                "to": [recipient_email],
+                "subject": (
+                    f"{organizer_name} invited you to plan your next trip "
+                    "on Traverse ✈️"
+                ),
+                "html": html_content,
+            }
+
+            response = resend.Emails.send(params)
+            print(f"[Email] Sent invite to {recipient_email}: {response}")
+            return True
+
+        except Exception as e:
+            print(f"[Email] Error sending invite to {recipient_email}: {e}")
+            return False
+
+    def send_itinerary_share(
+        self,
+        recipient_email: str,
+        recipient_name: str,
+        organizer_name: str,
+        destination: str,
+        dates: str,
+        duration: str,
+        itinerary_link: str,
+    ) -> bool:
+        """
+        Send an email to share a completed itinerary with a group member.
+
+        Args:
+            recipient_email: Email address of the participant
+            recipient_name: Full name of the participant
+            organizer_name: Name of the trip organizer
+            destination: Trip destination
+            dates: Trip dates
+            duration: Trip duration
+            itinerary_link: Link to view the itinerary
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        try:
+            html_content = f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <div style="text-align: center; padding: 20px 0;">
+                            <h1 style="color: #a1f800; margin: 0;">🌍 Traverse</h1>
+                        </div>
+                        
+                        <h2 style="color: #333;">Hey {recipient_name}!</h2>
+                        <p><strong>{organizer_name}</strong> has created an itinerary for your group trip and wants to share it with you:</p>
+                        
+                        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                            <h3 style="margin-top: 0; color: #333;">{destination}</h3>
+                            <p style="margin: 10px 0;"><strong>📅 Dates:</strong> {dates}</p>
+                            <p style="margin: 10px 0;"><strong>⏱️ Duration:</strong> {duration}</p>
+                        </div>
+
+                        <p>Click the button below to view your complete itinerary:</p>
+                        
+                        <div style="margin: 30px 0; text-align: center;">
+                            <a href="{itinerary_link}" style="background-color: #a1f800; color: black; padding: 15px 40px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 16px; display: inline-block;">
+                                View Itinerary
+                            </a>
+                        </div>
+
+                        <p style="color: #666; font-size: 14px;">
+                            Get ready for an amazing adventure! 🎉
+                        </p>
+
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        
+                        <p style="color: #999; font-size: 12px; text-align: center;">
+                            This itinerary was shared via Traverse - Your AI Travel Companion<br>
+                            If you received this email by mistake, you can safely ignore it.
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+
+            params = {
+                "from": f"Traverse <{self.sender_email}>",
+                "to": [recipient_email],
+                "subject": f"🗺️ Your itinerary for {destination} is ready!",
+                "html": html_content,
+            }
+
+            response = resend.Emails.send(params)
+            print(f"[Email] Sent itinerary share to {recipient_email}: {response}")
+            return True
+
+        except Exception as e:
+            print(f"[Email] Error sending itinerary share to {recipient_email}: {e}")
+            return False
+
+    def send_preferences_reminder(
+        self,
+        recipient_email: str,
+        recipient_name: str,
+        organizer_name: str,
+        trip_name: str,
+        preferences_link: str,
+    ) -> bool:
+        """
+        Send a reminder email to complete preferences.
+
+        Args:
+            recipient_email: Email address of the participant
+            recipient_name: Full name of the participant
+            organizer_name: Name of the trip organizer
+            trip_name: Name of the trip
+            preferences_link: Link to complete preferences
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        try:
+            html_content = f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <h2 style="color: #a1f800;">Hey {recipient_name}!</h2>
+                        <p>This is a friendly reminder from {organizer_name} to complete your travel preferences for <strong>{trip_name}</strong>.</p>
+                        <p>Your input will help create the perfect itinerary for everyone!</p>
+                        <div style="margin: 30px 0; text-align: center;">
+                            <a href="{preferences_link}" style="background-color: #a1f800; color: black; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                                Complete Preferences
+                            </a>
+                        </div>
+                        <p style="color: #666; font-size: 14px;">
+                            If you have any questions, reach out to {organizer_name}.
+                        </p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        <p style="color: #999; font-size: 12px; text-align: center;">
+                            Sent by Traverse - Your AI Travel Companion
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+
+            params = {
+                "from": f"Traverse <{self.sender_email}>",
+                "to": [recipient_email],
+                "subject": f"⏰ Don't forget to set your preferences for {trip_name}",
+                "html": html_content,
+            }
+
+            response = resend.Emails.send(params)
+            print(f"[Email] Sent preferences reminder to {recipient_email}: {response}")
+            return True
+
+        except Exception as e:
+            print(
+                f"[Email] Error sending preferences reminder to {recipient_email}: {e}"
+            )
+            return False
+
+    def _build_invite_email_html(
+        self,
+        recipient_name: str,
+        organizer_name: str,
+        trip_name: str,
+        destination: Optional[str],
+        date_range_start: Optional[str],
+        date_range_end: Optional[str],
+        custom_message: Optional[str],
+        invite_link: str,
+    ) -> str:
+        """Build the HTML content for the trip invite email."""
+
+        # Extract first name from recipient_name (fallback to full name if parsing fails)
+        first_name = (
+            recipient_name.split()[0] if recipient_name.split() else recipient_name
+        )
+
+        # Inline SVG arrow icon (Lucide-style) - two versions for different contexts
+        arrow_icon_inline = """
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-left: 4px; display: inline-block;">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+        """
+
+        arrow_icon_button = """
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-left: 6px; display: inline-block;">
+            <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+        """
+
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+            <head>
+                <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+            </head>
+            <body style="margin: 0; padding: 0; font-family: 'Montserrat', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #ffffff;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 30px 20px;">
+                    <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">Hi {first_name},</p>
+                    
+                    <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                        <strong style="font-weight: 600;">{organizer_name}</strong> just started a trip — <strong style="font-weight: 600;">"{trip_name}"</strong> — and wants you in.
+                    </p>
+                    
+                    <p style="font-size: 16px; color: #333; margin: 0 0 24px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                        <span style="display: inline-block; vertical-align: middle; margin-right: 8px;">{arrow_icon_inline}</span>
+                        Tap below to <strong style="font-weight: 600;">add your available dates</strong> and help the group lock in the trip:
+                    </p>
+                    
+                    <div style="margin: 32px 0; text-align: center;">
+                        <a href="{invite_link}" style="background-color: #a1f800; color: #000000; padding: 14px 32px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; display: inline-block; border: 2px solid rgba(0, 0, 0, 0.1); font-family: 'Montserrat', Arial, sans-serif; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);">
+                            Add My Dates{arrow_icon_button}
+                        </a>
+                    </div>
+                    
+                    <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                        Once everyone's in, you'll let us build your itinerary — all in minutes.
+                    </p>
+                    
+                    <p style="font-size: 16px; color: #333; margin: 0 0 32px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                        Let's make sure this one <em>actually</em> leaves the group chat
+                    </p>
+                    
+                    <p style="font-size: 16px; color: #333; margin: 32px 0 0 0; font-family: 'Montserrat', Arial, sans-serif;">
+                        — Team Traverse
+                    </p>
+
+                    <hr style="border: none; border-top: 1px solid #eeeeee; margin: 40px 0 20px 0;">
+                    
+                    <p style="color: #999999; font-size: 12px; text-align: center; margin: 0; line-height: 1.5; font-family: 'Montserrat', Arial, sans-serif;">
+                        This email was sent from an unmonitored address. Please do not reply to this email.<br>
+                        If you have questions, please contact {organizer_name} directly or visit Traverse.
+                    </p>
+                </div>
+            </body>
+        </html>
+        """
+
+        return html
+
+
+# Singleton instance
+email_service = EmailService()

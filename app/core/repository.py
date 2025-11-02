@@ -6,16 +6,10 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from dotenv import load_dotenv
-from pymongo import MongoClient
-
-from app.core.auth import get_password_hash, verify_password
 from app.core.schemas import (
     ClerkUserSync,
     ItineraryDocument,
     User,
-    UserCreate,
-    UserInDB,
     UserPreferences,
     UserPreferencesCreate,
 )
@@ -38,146 +32,77 @@ class MongoDBRepo:
         if not mongodb_uri:
             raise ValueError("MONGODB_URI environment variable is required")
 
-        # Initialize MongoDB client with alternative connection settings
-        self.client = MongoClient(mongodb_uri)
+        # Initialize MongoDB client with robust connection settings
+        # Add connection options to handle replica sets and SSL issues
+        self.client = MongoClient(
+            mongodb_uri,
+            serverSelectionTimeoutMS=5000,  # 5 second timeout
+            connectTimeoutMS=10000,  # 10 second connection timeout
+            socketTimeoutMS=20000,  # 20 second socket timeout
+            retryWrites=True,
+            retryReads=True,
+            # Handle replica set issues more gracefully
+            directConnection=False,  # Allow replica set connections
+            # SSL/TLS options - relaxed for development (remove in production)
+            tlsAllowInvalidCertificates=True,  # Allow invalid certs for dev
+            tlsAllowInvalidHostnames=True,  # Allow invalid hostnames for dev
+        )
 
         self.db = self.client[database_name]
 
         # Collections
         self.itineraries_collection = self.db.itineraries
         self.users_collection = self.db.users
-        self.sessions_collection = self.db.sessions
         self.preferences_collection = self.db.user_preferences
         self.trip_invites_collection = self.db.trip_invites
 
         # Test connection and create indexes only if connection works
         try:
-            # Test the connection
-            self.client.admin.command("ping")
+            # Test the connection with a shorter timeout
+            self.client.admin.command("ping", serverSelectionTimeoutMS=3000)
             print("MongoDB connection successful")
 
             # Create indexes for better performance (only if connection works)
             try:
                 self.users_collection.create_index("email", unique=True)
-                self.sessions_collection.create_index("id", unique=True)
                 print("Database indexes created")
             except Exception as index_error:
                 print(f"Index creation failed (might already exist): {index_error}")
 
         except Exception as e:
-            print(f"MongoDB connection failed: {e}")
+            # Suppress verbose error messages for development
+            error_msg = str(e)
+            if "No replica set members match selector" in error_msg:
+                print(
+                    "MongoDB connection warning: "
+                    "Replica set connection issue (continuing without DB)"
+                )
+            elif "SSL handshake failed" in error_msg:
+                print(
+                    "MongoDB connection warning: "
+                    "SSL handshake issue (continuing without DB)"
+                )
+            else:
+                print(f"MongoDB connection failed: {error_msg[:200]}...")
             print("Will continue without database connection (for development)")
-
-    # Sessions
-    def create_session(self, session: dict) -> None:
-        session_doc = {**session, "created_at": time.time()}
-        self.sessions_collection.insert_one(session_doc)
-
-    def get_session(self, session_id: str) -> Optional[dict]:
-        session_doc = self.sessions_collection.find_one({"id": session_id})
-        if session_doc:
-            session_doc.pop("_id", None)  # Remove MongoDB ObjectId
-        return session_doc
-
-    def update_session(self, session_id: str, data: dict) -> None:
-        self.sessions_collection.update_one({"id": session_id}, {"$set": data})
-
-    def get_active_session(
-        self, clerk_user_id: str, trip_type: Optional[str] = None
-    ) -> Optional[dict]:
-        """Get the active session for a user, or create one if none exists."""
-        session_doc = self.sessions_collection.find_one(
-            {"clerk_user_id": clerk_user_id, "status": "active"}
-        )
-
-        if session_doc:
-            session_doc.pop("_id", None)
-            return session_doc
-
-        # No active session exists, create one
-        session_id = f"sess_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow()
-
-        new_session = {
-            "id": session_id,
-            "clerk_user_id": clerk_user_id,
-            "trip_type": trip_type,
-            "status": "active",
-            "itinerary_id": None,
-            "messages": [],
-            "conversation_state": {},
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        self.sessions_collection.insert_one(new_session)
-        new_session.pop("_id", None)
-        return new_session
-
-    def finalize_session(self, session_id: str, itinerary_id: str) -> str:
-        """
-        Finalize a session by marking it as finalized and creating a new active session.
-
-        Returns the new active session ID.
-        """
-        # Get the current session
-        session = self.get_session(session_id)
-        if not session:
-            raise ValueError("Session not found")
-
-        clerk_user_id = session.get("clerk_user_id")
-        if not clerk_user_id:
-            raise ValueError("Session has no clerk_user_id")
-
-        now = datetime.utcnow()
-
-        # Mark current session as finalized
-        self.sessions_collection.update_one(
-            {"id": session_id},
-            {
-                "$set": {
-                    "status": "finalized",
-                    "itinerary_id": itinerary_id,
-                    "updated_at": now,
-                }
-            },
-        )
-
-        # Create new active session
-        new_session_id = f"sess_{uuid.uuid4().hex[:12]}"
-        new_session = {
-            "id": new_session_id,
-            "clerk_user_id": clerk_user_id,
-            "status": "active",
-            "itinerary_id": None,
-            "messages": [],
-            "conversation_state": {},
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        self.sessions_collection.insert_one(new_session)
-        return new_session_id
 
     # Itineraries
     def save_itinerary(
         self,
         doc: ItineraryDocument,
-        session_id: str | None = None,
         clerk_user_id: str | None = None,
     ) -> str:
         itn_id = f"itn_{uuid.uuid4().hex[:12]}"
         itinerary_doc = {
             "id": itn_id,
             "document": doc.model_dump(mode="json"),
-            "session_id": session_id,
             "clerk_user_id": clerk_user_id,
             "created_at": time.time(),
         }
         self.itineraries_collection.insert_one(itinerary_doc)
         return itn_id
 
-    def get_itinerary(self, itinerary_id: str) -> Optional[dict]:
+    def get_itinerary(self, itinerary_id: str) -> dict | None:
         itinerary_doc = self.itineraries_collection.find_one({"id": itinerary_id})
         if itinerary_doc:
             itinerary_doc.pop("_id", None)  # Remove MongoDB ObjectId
@@ -189,19 +114,19 @@ class MongoDBRepo:
         return result.deleted_count > 0
 
     def get_user_itineraries(self, clerk_user_id: str) -> list[dict]:
-        """Get all itineraries for a user by finding their finalized sessions or direct clerk_user_id."""
-        # First, find itineraries directly linked to user (new flow)
+        """Get all itineraries for a user by clerk_user_id."""
+        # Get user email for group trip participant matching
+        user_doc = self.users_collection.find_one({"clerk_user_id": clerk_user_id})
+        user_email = (
+            user_doc.get("email") if user_doc and user_doc.get("email") else None
+        )
+
+        # Find itineraries directly linked to user
         direct_itineraries = list(
             self.itineraries_collection.find({"clerk_user_id": clerk_user_id}).sort(
                 "created_at", -1
             )
         )
-
-        # Then find itineraries from finalized sessions (old flow)
-        sessions = self.sessions_collection.find(
-            {"clerk_user_id": clerk_user_id, "status": "finalized"},
-            {"itinerary_id": 1, "created_at": 1},
-        ).sort("created_at", -1)
 
         itineraries = []
         seen_ids = set()
@@ -212,46 +137,38 @@ class MongoDBRepo:
             itineraries.append(itn)
             seen_ids.add(itn["id"])
 
-        # Add session-based itineraries (avoid duplicates)
-        for session in sessions:
-            if session.get("itinerary_id") and session["itinerary_id"] not in seen_ids:
-                itinerary = self.get_itinerary(session["itinerary_id"])
-                if itinerary:
-                    itineraries.append(itinerary)
-                    seen_ids.add(session["itinerary_id"])
+        # Also include group trips where user is a participant (by email)
+        if user_email:
+            # Find all group itineraries where user's email matches a participant
+            # Use $elemMatch to explicitly match array elements
+            group_itineraries = list(
+                self.itineraries_collection.find(
+                    {
+                        "document.trip_type": "group",
+                        "document.group": {"$exists": True, "$ne": None},
+                        "document.group.participants": {
+                            "$elemMatch": {"email": user_email}
+                        },
+                    }
+                ).sort("created_at", -1)
+            )
+
+            # Add group itineraries where user is a participant (avoid duplicates)
+            for itn in group_itineraries:
+                itn.pop("_id", None)
+                if itn["id"] not in seen_ids:
+                    # Double-check that user's email is in participants
+                    participants = (
+                        itn.get("document", {}).get("group", {}).get("participants", [])
+                    )
+                    if any(p.get("email") == user_email for p in participants):
+                        itineraries.append(itn)
+                        seen_ids.add(itn["id"])
 
         return itineraries
 
     # Users
-    async def create_user(self, user_data: UserCreate) -> User:
-        """Create a new user in MongoDB."""
-        user_id = f"user_{uuid.uuid4().hex[:12]}"
-        hashed_password = get_password_hash(user_data.password)
-        now = datetime.utcnow()
-
-        user_doc = {
-            "id": user_id,
-            "email": user_data.email,
-            "username": user_data.username,
-            "full_name": user_data.full_name,
-            "hashed_password": hashed_password,
-            "is_active": True,
-            "scopes": ["user"],
-            "created_at": now,
-            "updated_at": now,
-        }
-
-        try:
-            self.users_collection.insert_one(user_doc)
-        except Exception as e:
-            if "duplicate key" in str(e).lower():
-                raise ValueError("User with this email already exists")
-            raise e
-
-        # Return User model (without hashed_password)
-        return User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
-
-    async def get_user_by_email(self, email: str) -> Optional[User]:
+    async def get_user_by_email(self, email: str) -> User | None:
         """Get user by email from MongoDB."""
         user_doc = self.users_collection.find_one({"email": email})
         if user_doc:
@@ -260,39 +177,13 @@ class MongoDBRepo:
             return User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
         return None
 
-    def get_user_by_email_sync(self, email: str) -> Optional[User]:
+    def get_user_by_email_sync(self, email: str) -> User | None:
         """Synchronous version for optional auth dependency."""
         user_doc = self.users_collection.find_one({"email": email})
         if user_doc:
             user_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
         return None
-
-    async def get_user_in_db(self, email: str) -> Optional[UserInDB]:
-        """Get complete user including hashed password (for authentication)."""
-        user_doc = self.users_collection.find_one({"email": email})
-        if user_doc:
-            user_doc.pop("_id", None)  # Remove MongoDB ObjectId
-            return UserInDB(**user_doc)
-        return None
-
-    async def authenticate_user(self, email: str, password: str) -> Optional[User]:
-        """Authenticate user with email and password."""
-        user_in_db = await self.get_user_in_db(email)
-        if not user_in_db:
-            return None
-
-        if not verify_password(password, user_in_db.hashed_password):
-            return None
-
-        # Return User model (without hashed_password)
-        return User(
-            **{
-                k: v
-                for k, v in user_in_db.model_dump().items()
-                if k != "hashed_password"
-            }
-        )
 
     # Clerk Integration Methods
     async def sync_clerk_user(self, clerk_data: ClerkUserSync) -> User:
@@ -370,7 +261,7 @@ class MongoDBRepo:
             else:
                 raise Exception("Failed to create user from Clerk data")
 
-    async def get_user_by_clerk_id(self, clerk_user_id: str) -> Optional[User]:
+    async def get_user_by_clerk_id(self, clerk_user_id: str) -> User | None:
         """Get user by Clerk user ID."""
         user_doc = self.users_collection.find_one({"clerk_user_id": clerk_user_id})
         if user_doc:
@@ -392,7 +283,7 @@ class MongoDBRepo:
         clerk_user_id: str,
         onboarding_completed: bool = None,
         onboarding_skipped: bool = None,
-    ) -> Optional[User]:
+    ) -> User | None:
         """Update user onboarding status."""
         update_data = {"updated_at": datetime.utcnow()}
 
@@ -455,9 +346,11 @@ class MongoDBRepo:
             return UserPreferences(**preferences_doc)
         return None
 
-    def get_user_preferences_dict(self, clerk_user_id: str) -> Optional[dict]:
+    def get_user_preferences_dict(self, clerk_user_id: str) -> dict | None:
         """Get user travel preferences as dict (sync version for itinerary generation)."""
-        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        preferences_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if preferences_doc:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return preferences_doc
@@ -471,11 +364,11 @@ class MongoDBRepo:
         self,
         organizer_clerk_id: str,
         organizer_email: str,
-        organizer_name: Optional[str],
+        organizer_name: str | None,
         trip_name: str,
-        destination: Optional[str] = None,
-        date_range_start: Optional[str] = None,
-        date_range_end: Optional[str] = None,
+        destination: str | None = None,
+        date_range_start: str | None = None,
+        date_range_end: str | None = None,
         collect_preferences: bool = False,
         trip_type: str = "group",
     ) -> dict:
@@ -484,7 +377,9 @@ class MongoDBRepo:
         now = datetime.utcnow()
 
         # Add organizer as first participant
-        organizer_first_name = organizer_name.split()[0] if organizer_name else "Organizer"
+        organizer_first_name = (
+            organizer_name.split()[0] if organizer_name else "Organizer"
+        )
         organizer_last_name = (
             " ".join(organizer_name.split()[1:])
             if organizer_name and len(organizer_name.split()) > 1
@@ -523,7 +418,7 @@ class MongoDBRepo:
         invite_doc.pop("_id", None)
         return invite_doc
 
-    def get_trip_invite(self, invite_id: str) -> Optional[dict]:
+    def get_trip_invite(self, invite_id: str) -> dict | None:
         """Get a trip invite by ID."""
         invite_doc = self.trip_invites_collection.find_one({"id": invite_id})
         if invite_doc:
@@ -533,7 +428,9 @@ class MongoDBRepo:
 
     def get_user_trip_invites(self, clerk_user_id: str) -> list[dict]:
         """Get all trip invites created by a user."""
-        invites = list(self.trip_invites_collection.find({"organizer_clerk_id": clerk_user_id}))
+        invites = list(
+            self.trip_invites_collection.find({"organizer_clerk_id": clerk_user_id})
+        )
         for invite in invites:
             invite.pop("_id", None)
         return invites
@@ -544,7 +441,9 @@ class MongoDBRepo:
             self.trip_invites_collection.find(
                 {
                     "participants.email": email,
-                    "participants": {"$elemMatch": {"email": email, "is_organizer": {"$ne": True}}},
+                    "participants": {
+                        "$elemMatch": {"email": email, "is_organizer": {"$ne": True}}
+                    },
                 }
             )
         )
@@ -589,9 +488,9 @@ class MongoDBRepo:
         self,
         invite_id: str,
         old_email: str,
-        new_email: Optional[str] = None,
-        first_name: Optional[str] = None,
-        last_name: Optional[str] = None,
+        new_email: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
     ) -> bool:
         """Update a participant's information."""
         invite = self.get_trip_invite(invite_id)
@@ -672,6 +571,98 @@ class MongoDBRepo:
                 participant["available_dates"] = available_dates
                 participant["submitted_at"] = datetime.utcnow()
                 break
+
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "participants": participants,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def update_invite_date_analysis(
+        self,
+        invite_id: str,
+        calculated_start_date: str | None,
+        calculated_end_date: str | None,
+        no_common_dates: bool,
+        common_dates_percentage: int | None,
+    ) -> bool:
+        """Update invite with date analysis results."""
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "calculated_start_date": calculated_start_date,
+                    "calculated_end_date": calculated_end_date,
+                    "no_common_dates": no_common_dates,
+                    "common_dates_percentage": common_dates_percentage,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def finalize_invite_dates(
+        self,
+        invite_id: str,
+        finalized_start_date: str,
+        finalized_end_date: str,
+        dates_finalized_by: str,
+    ) -> bool:
+        """Finalize dates for an invite (set by organizer)."""
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "finalized_start_date": finalized_start_date,
+                    "finalized_end_date": finalized_end_date,
+                    "dates_finalized_by": dates_finalized_by,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def update_invite_itinerary_id(
+        self,
+        invite_id: str,
+        itinerary_id: str,
+    ) -> bool:
+        """Update an invite with the itinerary_id when itinerary is created."""
+        result = self.trip_invites_collection.update_one(
+            {"id": invite_id},
+            {
+                "$set": {
+                    "itinerary_id": itinerary_id,
+                    "updated_at": datetime.utcnow(),
+                }
+            },
+        )
+        return result.modified_count > 0
+
+    def reset_participants_for_resend(
+        self,
+        invite_id: str,
+        participant_emails: list[str],
+    ) -> bool:
+        """Reset specified participants to 'invited' status and clear their availability."""
+        invite = self.get_trip_invite(invite_id)
+        if not invite:
+            return False
+
+        participants = invite.get("participants", [])
+        for participant in participants:
+            if participant["email"] in participant_emails and not participant.get(
+                "is_organizer"
+            ):
+                participant["status"] = "invited"
+                participant["available_dates"] = []
+                if "submitted_at" in participant:
+                    del participant["submitted_at"]
 
         result = self.trip_invites_collection.update_one(
             {"id": invite_id},

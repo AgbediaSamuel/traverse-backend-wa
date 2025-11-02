@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aisuite as ai  # type: ignore
 
@@ -15,7 +15,7 @@ class LLMProvider:
     def __init__(self, model: str) -> None:
         self.model = model
         self._client = None
-        self._genai_model: Optional[Any] = None
+        self._genai_model: Any | None = None
 
         # Route to google-generativeai if model starts with google-genai:
         if self.model.startswith("google-genai:"):
@@ -33,7 +33,7 @@ class LLMProvider:
             except Exception as exc:  # fail fast if aisuite cannot initialize
                 raise RuntimeError("Failed to initialize aisuite client") from exc
 
-    def chat(self, messages: List[Dict[str, Any]], temperature: float = 1.0) -> str:
+    def chat(self, messages: list[dict[str, Any]], temperature: float = 1.0) -> str:
         """Send a chat completion request. messages: list of dicts with keys: role (system|user|assistant), content (str)"""
         if self._genai_model is not None:
             # Map OpenAI-style messages to a single prompt for simplicity

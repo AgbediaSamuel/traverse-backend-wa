@@ -1,5 +1,3 @@
-from typing import Optional
-
 from app.core.clerk_auth import clerk_auth
 from app.core.repository import repo
 from app.core.schemas import ClerkUserSync, User
@@ -58,10 +56,10 @@ async def get_current_user_from_clerk(
 
 
 async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+    credentials: HTTPAuthorizationCredentials | None = Depends(
         HTTPBearer(auto_error=False)
     ),
-) -> Optional[User]:
+) -> User | None:
     """
     Optional dependency to get current user from Clerk JWT token.
     Returns None if no token is provided or invalid.

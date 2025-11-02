@@ -4,9 +4,11 @@ import { DayPage } from './components/DayPage';
 import { NotesPage } from './components/NotesPage';
 import { ParticipantsPage } from './components/ParticipantsPage';
 import { NavigationControls } from './components/NavigationControls';
+import LoadingScreen from './components/LoadingScreen';
 import { endpoints } from './config';
 
 const defaultItineraryData = {
+  tripName: "Vegas Weekend",
   traveler: "Sheriff",
   destination: "Las Vegas",
   duration: "Three Day Weekend",
@@ -103,13 +105,20 @@ const defaultItineraryData = {
 export default function App() {
   const [currentPage, setCurrentPage] = useState(0);
   const [data, setData] = useState(defaultItineraryData);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Track when React has hydrated (component mounted)
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   // Map backend document shape to this template's shape
   function mapDocumentToTemplate(doc: any) {
     const placeholderImg = 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=1200&auto=format&fit=crop';
     return {
+      tripName: doc.trip_name ?? 'Trip',
       traveler: doc.traveler_name ?? 'Traveler',
       destination: doc.destination ?? 'Destination',
       duration: doc.duration ?? 'Trip',
@@ -124,6 +133,7 @@ export default function App() {
           location: a.location ?? '',
           description: a.description ?? '',
           image: a.image ?? placeholderImg,
+          distance_to_next: a.distance_to_next ?? null,
         })),
       })),
       notes: doc.notes ?? [],
@@ -135,11 +145,21 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const itineraryId = params.get('itineraryId');
-    if (!itineraryId) return; // stay on default data
+    if (!itineraryId) {
+      // Still wait for hydration even with default data
+      setTimeout(() => {
+        setLoading(false);
+      }, 100);
+      return; // stay on default data
+    }
 
     setLoading(true);
     setError(null);
-    fetch(endpoints.itinerary(itineraryId))
+    
+    // Minimum delay to ensure loading screen is visible (1.5 seconds)
+    const minDelayPromise = new Promise(resolve => setTimeout(resolve, 1500));
+    
+    const fetchPromise = fetch(endpoints.itinerary(itineraryId))
       .then(async (res) => {
         if (!res.ok) throw new Error(`failed to load itinerary: ${res.status}`);
         const payload = await res.json();
@@ -147,9 +167,20 @@ export default function App() {
         setData(mapDocumentToTemplate(doc));
         setCurrentPage(0);
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+      .catch((e) => setError(String(e)));
+
+    // Wait for fetch, minimum delay, AND React hydration to complete
+    Promise.all([fetchPromise, minDelayPromise])
+      .then(() => {
+        // Wait for next tick to ensure React has rendered
+        setTimeout(() => {
+          setLoading(false);
+        }, 100);
+      });
   }, []);
+
+  // Keep loading screen visible until both data is loaded AND React is hydrated
+  const showLoading = loading || !isHydrated;
 
   const isGroupTrip = data.tripType === 'group';
   const hasParticipants = Boolean(data.group?.participants && data.group.participants.length > 0);
@@ -175,6 +206,7 @@ export default function App() {
     if (currentPage === 0) {
       return (
         <CoverPage
+          tripName={data.tripName}
           travelerName={data.traveler}
           destination={data.destination}
           duration={data.duration}
@@ -218,16 +250,14 @@ export default function App() {
 
   return (
     <div className="relative">
-      {loading && (
-        <div className="fixed inset-0 flex items-center justify-center z-50">
-          <div className="bg-white/90 backdrop-blur-sm rounded-xl p-4 shadow">Loading itinerary…</div>
-        </div>
-      )}
+      {showLoading && <LoadingScreen />}
       {error && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
           <div className="bg-red-50 text-red-700 rounded-xl p-4 shadow">{error}</div>
         </div>
       )}
+      {!showLoading && !error && (
+        <>
       {renderCurrentPage()}
       <NavigationControls
         currentPage={currentPage}
@@ -235,6 +265,8 @@ export default function App() {
         onNext={handleNext}
         onPrevious={handlePrevious}
       />
+        </>
+      )}
     </div>
   );
 }
