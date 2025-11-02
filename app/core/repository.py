@@ -6,13 +6,8 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from app.core.schemas import (
-    ClerkUserSync,
-    ItineraryDocument,
-    User,
-    UserPreferences,
-    UserPreferencesCreate,
-)
+from app.core.schemas import (ClerkUserSync, ItineraryDocument, User,
+                              UserPreferences, UserPreferencesCreate)
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
@@ -32,8 +27,21 @@ class MongoDBRepo:
         if not mongodb_uri:
             raise ValueError("MONGODB_URI environment variable is required")
 
-        # Initialize MongoDB client with alternative connection settings
-        self.client = MongoClient(mongodb_uri)
+        # Initialize MongoDB client with robust connection settings
+        # Add connection options to handle replica sets and SSL issues
+        self.client = MongoClient(
+            mongodb_uri,
+            serverSelectionTimeoutMS=5000,  # 5 second timeout
+            connectTimeoutMS=10000,  # 10 second connection timeout
+            socketTimeoutMS=20000,  # 20 second socket timeout
+            retryWrites=True,
+            retryReads=True,
+            # Handle replica set issues more gracefully
+            directConnection=False,  # Allow replica set connections
+            # SSL/TLS options - relaxed for development (remove in production)
+            tlsAllowInvalidCertificates=True,  # Allow invalid certs for dev
+            tlsAllowInvalidHostnames=True,  # Allow invalid hostnames for dev
+        )
 
         self.db = self.client[database_name]
 
@@ -45,8 +53,8 @@ class MongoDBRepo:
 
         # Test connection and create indexes only if connection works
         try:
-            # Test the connection
-            self.client.admin.command("ping")
+            # Test the connection with a shorter timeout
+            self.client.admin.command("ping", serverSelectionTimeoutMS=3000)
             print("MongoDB connection successful")
 
             # Create indexes for better performance (only if connection works)
@@ -57,7 +65,20 @@ class MongoDBRepo:
                 print(f"Index creation failed (might already exist): {index_error}")
 
         except Exception as e:
-            print(f"MongoDB connection failed: {e}")
+            # Suppress verbose error messages for development
+            error_msg = str(e)
+            if "No replica set members match selector" in error_msg:
+                print(
+                    "MongoDB connection warning: "
+                    "Replica set connection issue (continuing without DB)"
+                )
+            elif "SSL handshake failed" in error_msg:
+                print(
+                    "MongoDB connection warning: "
+                    "SSL handshake issue (continuing without DB)"
+                )
+            else:
+                print(f"MongoDB connection failed: {error_msg[:200]}...")
             print("Will continue without database connection (for development)")
 
     # Itineraries

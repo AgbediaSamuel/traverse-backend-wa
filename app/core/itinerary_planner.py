@@ -8,6 +8,7 @@ def calculate_daily_activities(
 ) -> list[dict[str, int]]:
     """
     Calculate how many activities should be in each day based on user preferences.
+    Uses base counts with optional activities for flexibility.
 
     Args:
         pace_style: User's pace preference (0=Relaxation, 100=Adventure)
@@ -17,21 +18,25 @@ def calculate_daily_activities(
     Returns:
         List of dicts with activity counts per day:
         [
-            {"day": 1, "min_activities": 2, "max_activities": 3},
-            {"day": 2, "min_activities": 3, "max_activities": 4},
+            {
+                "day": 1,
+                "min_activities": 2,  # Base required activities
+                "max_activities": 3,  # Base + optional activities
+                "optional_activities": 1  # Additional flexible activities
+            },
             ...
         ]
     """
-    # Base activity count based on pace style
+    # Base activity count based on pace style (required activities)
     if pace_style <= 33:  # Relaxation
-        base_min = 2
-        base_max = 3
+        base_count = 3
+        optional_count = 1  # +1 optional = 4 total max
     elif pace_style <= 66:  # Moderate
-        base_min = 3
-        base_max = 4
+        base_count = 5
+        optional_count = 2  # +2 optional = 7 total max
     else:  # Adventure
-        base_min = 4
-        base_max = 6
+        base_count = 7
+        optional_count = 2  # +2 optional = 9 total max
 
     daily_activities = []
 
@@ -39,19 +44,28 @@ def calculate_daily_activities(
         # Adjust for first and last day (lighter schedule)
         if day_num == 1:
             # First day: arrival, lighter schedule
-            min_acts = max(2, base_min - 1)
-            max_acts = max(3, base_max - 1)
+            # Reduce base by 1-2, keep optional count the same
+            min_acts = max(2, base_count - 2)
+            max_acts = min_acts + optional_count
+            optional_acts = optional_count
         elif day_num == total_days:
             # Last day: departure, lighter schedule
-            min_acts = max(2, base_min - 1)
-            max_acts = max(3, base_max - 1)
+            min_acts = max(2, base_count - 2)
+            max_acts = min_acts + optional_count
+            optional_acts = optional_count
         else:
             # Middle days: full schedule
-            min_acts = base_min
-            max_acts = base_max
+            min_acts = base_count
+            max_acts = base_count + optional_count
+            optional_acts = optional_count
 
         daily_activities.append(
-            {"day": day_num, "min_activities": min_acts, "max_activities": max_acts}
+            {
+                "day": day_num,
+                "min_activities": min_acts,
+                "max_activities": max_acts,
+                "optional_activities": optional_acts,
+            }
         )
 
     return daily_activities

@@ -1,16 +1,10 @@
 from datetime import datetime
 
 from app.core.repository import repo
-from app.core.schemas import (
-    CalendarResponseSubmit,
-    FinalizeDatesRequest,
-    InviteParticipantCreate,
-    InviteParticipantUpdate,
-    ResendInvitesRequest,
-    SendInvitesRequest,
-    TripInviteCreate,
-    TripInviteResponse,
-)
+from app.core.schemas import (CalendarResponseSubmit, FinalizeDatesRequest,
+                              InviteParticipantCreate, InviteParticipantUpdate,
+                              ResendInvitesRequest, SendInvitesRequest,
+                              TripInviteCreate, TripInviteResponse)
 from fastapi import APIRouter, Header, HTTPException
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])

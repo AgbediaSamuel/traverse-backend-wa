@@ -137,6 +137,15 @@ class PlacesService:
                     if not any(t in allowed_types for t in place_types):
                         continue
 
+                # Extract coordinates from geometry.location
+                lat = None
+                lng = None
+                geometry = place.get("geometry")
+                if geometry and geometry.get("location"):
+                    location = geometry["location"]
+                    lat = location.get("lat")
+                    lng = location.get("lng")
+
                 filtered.append(
                     {
                         "place_id": place.get("place_id"),
@@ -150,6 +159,8 @@ class PlacesService:
                             if place.get("photos")
                             else None
                         ),
+                        "lat": lat,
+                        "lng": lng,
                     }
                 )
             return filtered
@@ -237,6 +248,15 @@ class PlacesService:
 
             result = data.get("result", {})
 
+            # Extract coordinates from geometry.location
+            lat = None
+            lng = None
+            geometry = result.get("geometry")
+            if geometry and geometry.get("location"):
+                location = geometry["location"]
+                lat = location.get("lat")
+                lng = location.get("lng")
+
             result_dict = {
                 "place_id": place_id,
                 "name": result.get("name"),
@@ -250,6 +270,8 @@ class PlacesService:
                     if result.get("photos")
                     else None
                 ),
+                "lat": lat,
+                "lng": lng,
             }
             opening = result.get("opening_hours", {})
             result_dict["opening_hours"] = opening.get("weekday_text", [])

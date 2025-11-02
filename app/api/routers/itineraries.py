@@ -4,7 +4,7 @@ from typing import Any
 from app.core.places_service import places_service
 from app.core.repository import repo
 from app.core.schemas import Activity, Day, ItineraryDocument
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 router = APIRouter(prefix="/itineraries", tags=["itineraries"])
 
@@ -120,7 +120,7 @@ def get_sample_itinerary() -> ItineraryDocument:
 # New deterministic generator (no LLM selection)
 # ----------------------------------------------
 @router.post("/generate2", response_model=dict[str, Any])
-def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
+def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     """
     Deterministic itinerary generation using weighted scoring over Google Places
     results plus user/group preferences. No LLM is used for venue selection.
@@ -132,10 +132,8 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
     """
     from datetime import datetime, timedelta
 
-    from app.core.itinerary_planner import (
-        calculate_daily_activities,
-        get_budget_price_levels,
-    )
+    from app.core.itinerary_planner import (calculate_daily_activities,
+                                            get_budget_price_levels)
     from app.core.preference_aggregator import aggregate_preferences
     from pydantic import HttpUrl
 
@@ -152,6 +150,9 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
     )  # optional [{first_name,last_name}]
     notes_text = (payload.get("notes") or "").lower()
     vibe_notes = payload.get("vibe_notes") or ""  # Optional context for generation
+
+    # Get base URL for proxy photo URLs
+    base_url = str(request.base_url).rstrip("/") if request else "http://localhost:8765"
 
     if not trip_name or not traveler_name or not destination or not dates:
         raise HTTPException(
@@ -499,14 +500,14 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
         if queries:
             interest_mapping[interest] = queries[0]
 
-    def interest_match_score(
+    def keyword_match_score(
         venue: dict[str, Any],
         selected_interests: list[str],
         extracted_keywords: list[str],
         interest_mapping: dict[str, str],
     ) -> float:
         """
-        Score how well a venue matches user's selected interests.
+        Calculate keyword-based matching score (fallback/complement to semantic).
 
         Returns:
             Score between 0.0 and 1.0
@@ -540,6 +541,42 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
 
         return min(1.0, score)  # Cap at 1.0
 
+    def interest_match_score(
+        venue: dict[str, Any],
+        selected_interests: list[str],
+        extracted_keywords: list[str],
+        interest_mapping: dict[str, str],
+        semantic_score: float | None = None,
+    ) -> float:
+        """
+        Score how well a venue matches user's selected interests.
+        Uses hybrid scoring: combines semantic and keyword matching.
+
+        Args:
+            venue: Venue dictionary
+            selected_interests: List of user's selected interests
+            extracted_keywords: List of extracted keywords
+            interest_mapping: Mapping of interests to query terms
+            semantic_score: Pre-computed semantic score (if available)
+
+        Returns:
+            Score between 0.0 and 1.0
+        """
+        # Calculate keyword score
+        keyword_score = keyword_match_score(
+            venue, selected_interests, extracted_keywords, interest_mapping
+        )
+
+        # If semantic score is provided, use hybrid scoring
+        if semantic_score is not None and semantic_score > 0.0:
+            # Hybrid: combine semantic (70%) and keyword (30%)
+            # Semantic captures meaning, keyword captures exact matches
+            hybrid_score = 0.7 * semantic_score + 0.3 * keyword_score
+            return min(1.0, hybrid_score)
+
+        # Fallback to keyword only
+        return keyword_score
+
     note_boost_terms = [
         "museum",
         "coffee",
@@ -571,9 +608,31 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
             boost_terms_to_check.extend(notes_text.split())
         return boost_val if any(t in text for t in boost_terms_to_check) else 0.0
 
+    # Batch compute semantic scores for all venues (much faster!)
+    semantic_scores: list[float] | None = None
+    try:
+        from app.core.semantic_matcher import get_semantic_matcher
+
+        matcher = get_semantic_matcher()
+        if matcher.is_available():
+            print(
+                f"[InterestMatch] Computing semantic scores for {len(candidates)} venues in batch..."
+            )
+            semantic_scores = matcher.match_interests_batch(
+                candidates, interests, all_extracted_keywords
+            )
+            print(f"[InterestMatch] Batch semantic matching completed")
+        else:
+            print(
+                "[InterestMatch] Semantic matching not available, using keyword matching only"
+            )
+    except Exception as e:
+        print(f"[InterestMatch] Semantic matching failed: {e}")
+        print("[InterestMatch] Falling back to keyword matching only")
+
     # Score each candidate with updated weights
     scored: list[dict[str, Any]] = []
-    for v in candidates:
+    for idx, v in enumerate(candidates):
         s = 0.0
 
         # Updated weights: more emphasis on interest matching
@@ -581,9 +640,10 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
         s += 0.25 * price_fit_score(v.get("price_level"))  # Reduced from 0.3
         s += 0.15 * (1.0 if v.get("photo_reference") else 0.3)  # Reduced from 0.2
 
-        # NEW: Interest match score (25% of total)
+        # NEW: Interest match score (25% of total) - hybrid semantic + keyword
+        semantic_score = semantic_scores[idx] if semantic_scores else None
         interest_score = interest_match_score(
-            v, interests, all_extracted_keywords, interest_mapping
+            v, interests, all_extracted_keywords, interest_mapping, semantic_score
         )
         s += 0.25 * interest_score
 
@@ -674,7 +734,10 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
             slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][j % 5]
             img = None
             if v.get("photo_reference"):
-                url = places_service.get_place_photo_url(v["photo_reference"]) or None
+                url = (
+                    places_service.get_proxy_photo_url(v["photo_reference"], base_url)
+                    or None
+                )
                 img = HttpUrl(url) if url else None
             activities.append(
                 Activity(
@@ -704,7 +767,9 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
                     img = None
                     if v.get("photo_reference"):
                         url = (
-                            places_service.get_place_photo_url(v["photo_reference"])
+                            places_service.get_proxy_photo_url(
+                                v["photo_reference"], base_url
+                            )
                             or None
                         )
                         img = HttpUrl(url) if url else None
@@ -843,7 +908,13 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
             timing_text = timing_text.replace("'", '"')
 
             print(f"[Timing Debug] Extracted JSON: {timing_text[:200]}")
-            times = json.loads(timing_text)
+            # Parse JSON (json is imported at top level)
+            try:
+                times = json.loads(timing_text)
+            except ValueError as e:
+                # json.JSONDecodeError is a subclass of ValueError
+                print(f"[Timing] JSON decode error: {e}")
+                raise ValueError(f"Invalid JSON format: {e}")
 
             # Validate and apply times
             if isinstance(times, list) and len(times) == len(day.activities):
@@ -961,9 +1032,8 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
         # Parse the JSON response
-        import json
-
         # Try to extract JSON array from response
+        # (json is already imported at top level)
         notes_text = notes_response.strip()
         if notes_text.startswith("```"):
             # Remove markdown code fences
@@ -1056,7 +1126,9 @@ def generate_itinerary_v2(payload: dict[str, Any]) -> dict[str, Any]:
         for q in cover_qs:
             res = places_service.search_places(location=destination, query=q)
             if res and res[0].get("photo_reference"):
-                url = places_service.get_place_photo_url(res[0]["photo_reference"])
+                url = places_service.get_proxy_photo_url(
+                    res[0]["photo_reference"], base_url
+                )
                 if url:
                     doc.cover_image = HttpUrl(url)
                     break

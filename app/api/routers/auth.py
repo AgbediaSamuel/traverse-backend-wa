@@ -1,11 +1,6 @@
 from app.core.repository import repo
-from app.core.schemas import (
-    ClerkUserSync,
-    OnboardingUpdate,
-    User,
-    UserPreferences,
-    UserPreferencesCreate,
-)
+from app.core.schemas import (ClerkUserSync, OnboardingUpdate, User,
+                              UserPreferences, UserPreferencesCreate)
 from fastapi import APIRouter, HTTPException, status
 
 # Create the router
