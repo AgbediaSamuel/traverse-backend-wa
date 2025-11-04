@@ -1,3 +1,4 @@
+import React from 'react';
 import { Users } from 'lucide-react';
 
 interface Participant {
@@ -10,7 +11,7 @@ interface ParticipantsPageProps {
   collectPreferences: boolean;
 }
 
-export function ParticipantsPage({ participants, collectPreferences }: ParticipantsPageProps) {
+export const ParticipantsPage = React.memo(function ParticipantsPage({ participants, collectPreferences }: ParticipantsPageProps) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-50 p-8">
       <div className="max-w-4xl mx-auto">
@@ -77,5 +78,5 @@ export function ParticipantsPage({ participants, collectPreferences }: Participa
       </div>
     </div>
   );
-}
+});
 

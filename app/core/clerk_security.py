@@ -1,8 +1,12 @@
+import logging
+
 from app.core.clerk_auth import clerk_auth
 from app.core.repository import repo
 from app.core.schemas import ClerkUserSync, User
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -28,12 +32,40 @@ async def get_current_user_from_clerk(
         # Verify Clerk token
         clerk_payload = await clerk_auth.verify_clerk_token(credentials.credentials)
         if not clerk_payload:
+            logger.warning("Token verification returned None")
             raise credentials_exception
 
         # Extract user data from Clerk token
         user_data = clerk_auth.extract_user_data(clerk_payload)
 
-        if not user_data.get("clerk_user_id") or not user_data.get("email"):
+        logger.debug(
+            f"Extracted user data: clerk_user_id={user_data.get('clerk_user_id')}, email={user_data.get('email')}"
+        )
+
+        # If email is missing from token, fetch from Clerk API
+        if not user_data.get("email") and user_data.get("clerk_user_id"):
+            logger.debug("Email not in token, fetching from Clerk API")
+            clerk_user_info = await clerk_auth.get_clerk_user_info(
+                user_data["clerk_user_id"]
+            )
+            if clerk_user_info:
+                # Extract email from Clerk API response
+                primary_email = clerk_user_info.get("email_addresses", [{}])[0]
+                if primary_email:
+                    user_data["email"] = primary_email.get("email_address")
+                    user_data["email_verified"] = (
+                        primary_email.get("verification", {}).get("status")
+                        == "verified"
+                    )
+
+        if not user_data.get("clerk_user_id"):
+            logger.warning(f"Missing clerk_user_id")
+            raise credentials_exception
+
+        if not user_data.get("email"):
+            logger.warning(
+                f"Email not found in token or Clerk API for user {user_data.get('clerk_user_id')}"
+            )
             raise credentials_exception
 
         # Check if user exists in our database
@@ -51,7 +83,7 @@ async def get_current_user_from_clerk(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Authentication error: {e}")
+        logger.error(f"Authentication error: {e}", exc_info=True)
         raise credentials_exception
 
 

@@ -371,6 +371,7 @@ class MongoDBRepo:
         date_range_end: str | None = None,
         collect_preferences: bool = False,
         trip_type: str = "group",
+        cover_image: str | None = None,
     ) -> dict:
         """Create a new trip invite."""
         invite_id = str(uuid.uuid4())
@@ -410,6 +411,7 @@ class MongoDBRepo:
             "trip_type": trip_type,
             "status": "draft",
             "participants": [organizer_participant],  # Organizer as first participant
+            "cover_image": cover_image,
             "created_at": now,
             "updated_at": now,
         }
