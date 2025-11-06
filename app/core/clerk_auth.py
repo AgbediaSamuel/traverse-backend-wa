@@ -247,15 +247,40 @@ class ClerkAuth:
         Returns:
             Standardized user data dictionary
         """
+        first_name = (
+            clerk_payload.get("given_name")
+            or clerk_payload.get("first_name")
+            or ""
+        )
+        last_name = (
+            clerk_payload.get("family_name")
+            or clerk_payload.get("last_name")
+            or ""
+        )
+
+        if (not first_name or not last_name) and clerk_payload.get("name"):
+            name_parts = clerk_payload.get("name", "").strip().split()
+            if name_parts:
+                first_name = first_name or name_parts[0]
+                if len(name_parts) > 1:
+                    last_name = last_name or " ".join(name_parts[1:])
+
+        first_name = first_name.strip()
+        last_name = last_name.strip()
+        full_name = (
+            clerk_payload.get("name")
+            or f"{first_name} {last_name}".strip()
+        )
+
         # Extract common fields from Clerk token
         return {
             "clerk_user_id": clerk_payload.get("sub"),  # Clerk user ID
             "email": clerk_payload.get("email"),
             "email_verified": clerk_payload.get("email_verified", False),
             "username": clerk_payload.get("username"),
-            "first_name": clerk_payload.get("given_name"),
-            "last_name": clerk_payload.get("family_name"),
-            "full_name": f"{clerk_payload.get('given_name', '')} {clerk_payload.get('family_name', '')}".strip(),
+            "first_name": first_name or None,
+            "last_name": last_name or None,
+            "full_name": full_name if full_name else None,
             "image_url": clerk_payload.get("picture"),
             "created_at": clerk_payload.get("iat"),  # Issued at time
         }

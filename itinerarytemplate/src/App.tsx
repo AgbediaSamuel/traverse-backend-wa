@@ -104,7 +104,7 @@ const defaultItineraryData = {
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState(0);
-  const [data, setData] = useState(defaultItineraryData);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -121,6 +121,7 @@ export default function App() {
       tripName: doc.trip_name ?? 'Trip',
       traveler: doc.traveler_name ?? 'Traveler',
       destination: doc.destination ?? 'Destination',
+      city: doc.city ?? null, // Extracted city name for browser title
       duration: doc.duration ?? 'Trip',
       dates: doc.dates ?? '',
       coverImage: doc.cover_image ?? placeholderImg,
@@ -146,11 +147,12 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const itineraryId = params.get('itineraryId');
     if (!itineraryId) {
-      // Still wait for hydration even with default data
+      // No itineraryId: use default data for demo/testing
+      setData(defaultItineraryData);
       setTimeout(() => {
         setLoading(false);
       }, 100);
-      return; // stay on default data
+      return;
     }
 
     setLoading(true);
@@ -176,18 +178,41 @@ export default function App() {
   }, []);
 
   // Keep loading screen visible until both data is loaded AND React is hydrated
-  const showLoading = loading || !isHydrated;
+  const showLoading = loading || !isHydrated || !data;
 
-  const isGroupTrip = data.tripType === 'group';
-  const hasParticipants = Boolean(data.group?.participants && data.group.participants.length > 0);
+  // Update browser title with city name when data is loaded
+  useEffect(() => {
+    // Only update title when we have real data (not null)
+    if (!data) return;
+    
+    // Extract city name: use stored city field or parse from destination
+    let cityName: string | null = data.city;
+    
+    // Fallback: parse city from destination if city field not available (for old itineraries)
+    if (!cityName && data.destination) {
+      const parts = data.destination.split(",");
+      cityName = parts[0].trim() || null;
+    }
+    
+    // Update document title
+    if (cityName) {
+      document.title = cityName;
+    } else {
+      document.title = "My Itinerary"; // Fallback to generic title
+    }
+  }, [data]);
+
+  const isGroupTrip = data?.tripType === 'group';
+  const hasParticipants = Boolean(data?.group?.participants && data.group.participants.length > 0);
   const totalPages = useMemo(() => {
+    if (!data) return 0;
     // Cover + (Participants if present) + days + notes
     return 1 + (hasParticipants ? 1 : 0) + data.days.length + 1;
   }, [data, hasParticipants]);
 
   // Preload images for adjacent pages
   useEffect(() => {
-    if (loading || !isHydrated) return;
+    if (loading || !isHydrated || !data) return;
 
     const imagesToPreload: string[] = [];
 
@@ -265,6 +290,8 @@ export default function App() {
   }, []);
 
   const renderCurrentPage = useMemo(() => {
+    if (!data) return null;
+    
     // Page 0: Cover
     if (currentPage === 0) {
       return (

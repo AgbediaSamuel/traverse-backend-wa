@@ -1,6 +1,7 @@
 import json
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.clerk_security import get_current_user_from_clerk
@@ -143,14 +144,11 @@ def generate_itinerary_v2(
 
     All input is validated using Pydantic schemas for security and data integrity.
     """
-    from datetime import datetime, timedelta
-
     from app.core.itinerary_planner import (
         calculate_daily_activities,
         get_budget_price_levels,
     )
     from app.core.preference_aggregator import aggregate_preferences
-    from pydantic import HttpUrl
 
     # Extract validated data from schema
     trip_name = payload.trip_name
@@ -165,8 +163,11 @@ def generate_itinerary_v2(
     notes_text = (payload.notes or "").lower()
     vibe_notes = payload.vibe_notes or ""  # Optional context for generation
 
-    # Get base URL for proxy photo URLs
-    base_url = str(request.base_url).rstrip("/") if request else "http://localhost:8765"
+    # For proxy photo URLs, we need to determine the base URL
+    # When behind nginx proxy, request.base_url will be the proxy URL (e.g., http://localhost:8080/)
+    # We want to return relative paths that work through the proxy
+    # So we'll pass an empty string to get_proxy_photo_url, and it will return relative paths
+    base_url = ""
 
     # Parse dates → list of day strings (dates already validated by schema)
     # But we still need to parse them for use in the function
@@ -207,9 +208,22 @@ def generate_itinerary_v2(
     interests = (
         aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
     )
-    other_interests_texts = (
-        aggregated_prefs.get("other_interests", []) if aggregated_prefs else []
+
+    raw_other_interests = (
+        aggregated_prefs.get("other_interests") if aggregated_prefs else None
     )
+    if isinstance(raw_other_interests, list):
+        other_interests_texts = [
+            str(item).strip() for item in raw_other_interests if str(item).strip()
+        ]
+    elif isinstance(raw_other_interests, str):
+        other_interests_texts = [
+            part.strip()
+            for part in re.split(r"[,\n]", raw_other_interests)
+            if part.strip()
+        ]
+    else:
+        other_interests_texts = []
 
     # Extract structured info from other_interests using NLP
     from app.core.preference_extractor import extract_preferences_from_text
@@ -733,7 +747,7 @@ def generate_itinerary_v2(
                     places_service.get_proxy_photo_url(v["photo_reference"], base_url)
                     or None
                 )
-                img = HttpUrl(url) if url else None
+                img = url  # Use string directly (can be relative or absolute)
             activities.append(
                 Activity(
                     time=slot,
@@ -767,7 +781,7 @@ def generate_itinerary_v2(
                             )
                             or None
                         )
-                        img = HttpUrl(url) if url else None
+                        img = url  # Use string directly (can be relative or absolute)
 
                     activities.append(
                         Activity(
@@ -873,8 +887,6 @@ def generate_itinerary_v2(
             )
 
             # Parse timing response
-            import re
-
             print(f"[Timing Debug] Raw LLM response: {timing_response[:300]}")
 
             timing_text = timing_response.strip()
@@ -1052,6 +1064,19 @@ def generate_itinerary_v2(
             "Check venue closures and events the day before.",
         ]
 
+    # Extract city name from destination for browser title
+    # Format: "Paris, France" -> "Paris" or "Las Vegas" -> "Las Vegas"
+    def extract_city(dest: str) -> str:
+        """Extract city name from destination string (before comma)."""
+        if not dest:
+            return ""
+        # Split by comma and take first part, trim whitespace
+        parts = dest.split(",")
+        city = parts[0].strip()
+        return city
+
+    city_name = extract_city(destination)
+
     # Build itinerary document (with optional group metadata)
     doc = ItineraryDocument(
         trip_name=trip_name,
@@ -1063,6 +1088,7 @@ def generate_itinerary_v2(
         days=days,
         notes=trip_notes,
         trip_type=trip_type if trip_type in ("solo", "group") else None,
+        city=city_name if city_name else None,
     )
 
     # Attach group metadata when applicable
@@ -1126,7 +1152,7 @@ def generate_itinerary_v2(
                     res[0]["photo_reference"], base_url
                 )
                 if url:
-                    doc.cover_image = HttpUrl(url)
+                    doc.cover_image = url  # Use string directly (can be relative or absolute)
                     break
     except Exception:
         pass

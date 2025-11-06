@@ -4,6 +4,7 @@ from app.api.routers.auth import router as auth_router
 from app.api.routers.calendar import router as calendar_router
 from app.api.routers.itineraries import router as itineraries_router
 from app.api.routers.places import router as places_router
+from app.api.routers.webhooks import webhook_router
 from app.core.csrf_middleware import CSRFProtectionMiddleware
 from app.core.repository import repo
 from app.core.settings import get_settings
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
     # CORS: restrict to localhost ports for development
     # Frontend: localhost:3456 (Next.js)
     # Itinerary Template: localhost:5174 (Vite)
+    # Production: ngrok domain (e.g., https://xxx.ngrok-free.dev)
     allowed_origins = [
         "http://localhost:3456",
         "http://localhost:5174",
@@ -28,6 +30,7 @@ def create_app() -> FastAPI:
     ]
 
     # Add production origins from environment if set
+    # For ngrok: set ALLOWED_ORIGINS=https://xxx.ngrok-free.dev
     prod_origins = os.getenv("ALLOWED_ORIGINS", "")
     if prod_origins:
         allowed_origins.extend(
@@ -53,6 +56,9 @@ def create_app() -> FastAPI:
     application.include_router(itineraries_router)
     application.include_router(calendar_router)
     application.include_router(places_router)
+    # Webhook router for Clerk webhooks
+    # Handles /webhooks/clerk (nginx strips /api/ from /api/webhooks/clerk)
+    application.include_router(webhook_router)
     return application
 
 

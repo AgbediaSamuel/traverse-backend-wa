@@ -20,6 +20,7 @@ ALLOWED_ORIGINS = [
 ]
 
 # Add production origins from environment if set
+# For ngrok: set ALLOWED_ORIGINS=https://xxx.ngrok-free.dev
 PROD_ORIGINS = os.getenv("ALLOWED_ORIGINS", "").split(",")
 ALLOWED_ORIGINS.extend([origin.strip() for origin in PROD_ORIGINS if origin.strip()])
 
@@ -35,6 +36,10 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip CSRF check for webhook routes (Clerk sends webhooks from different origin)
+        if request.url.path.startswith("/webhooks/"):
+            return await call_next(request)
+        
         # Only check state-changing methods
         if request.method not in STATE_CHANGING_METHODS:
             return await call_next(request)

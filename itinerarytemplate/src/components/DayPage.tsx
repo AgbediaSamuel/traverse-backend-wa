@@ -23,10 +23,10 @@ export const DayPage = React.memo(function DayPage({ dayNumber, date, activities
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="text-center mb-12" style={{ overflow: 'visible' }}>
-          <h1 className="text-5xl mb-4 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent" style={{ lineHeight: '1.2', paddingBottom: '0.15em' }}>
+          <h1 className="text-4xl md:text-5xl mb-4 bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent" style={{ lineHeight: '1.2', paddingBottom: '0.15em' }}>
             Day {dayNumber}
           </h1>
-          <p className="text-xl text-gray-600">{date}</p>
+          <p className="text-lg md:text-xl text-gray-600">{date}</p>
         </div>
         
         {/* Activities */}

@@ -305,38 +305,211 @@ class PlacesService:
         )
 
     def get_proxy_photo_url(
-        self, photo_reference: str, base_url: str, max_width: int = 1080
+        self, photo_reference: str, base_url: str = "", max_width: int = 1080
     ) -> str | None:
-        """Build absolute URL to backend photo proxy.
+        """Build URL to backend photo proxy.
 
         Args:
             photo_reference: Google Places photo_reference
-            base_url: Request base URL (e.g., "http://localhost:8765/")
+            base_url: Request base URL (e.g., "http://localhost:8765/") or empty string for relative paths
             max_width: Desired width
         """
-        if not photo_reference or not base_url:
+        if not photo_reference:
             return None
+        
+        # Always use relative path /api/places/photo when behind nginx proxy
+        # This works correctly when proxied through ngrok
+        if not base_url:
+            return f"/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
+        
+        # If base_url is provided, ensure it includes /api prefix
         base = base_url.rstrip("/")
-        return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
+        # Check if base_url already includes /api, if not add it
+        if not base.endswith("/api"):
+            return f"{base}/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
+        else:
+            return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
 
     def autocomplete_places(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         """Return lightweight autocomplete suggestions for destinations.
 
-        Uses Places Autocomplete API. Falls back to geocode when needed.
+        Uses Places Autocomplete API with improved filtering for realistic cities.
+        Handles country searches by showing cities within that country.
         """
         try:
+            # Common country names and their ISO codes
+            country_map = {
+                "spain": "ES",
+                "france": "FR",
+                "italy": "IT",
+                "germany": "DE",
+                "united kingdom": "GB",
+                "uk": "GB",
+                "portugal": "PT",
+                "greece": "GR",
+                "netherlands": "NL",
+                "belgium": "BE",
+                "switzerland": "CH",
+                "austria": "AT",
+                "czech republic": "CZ",
+                "poland": "PL",
+                "united states": "US",
+                "usa": "US",
+                "us": "US",
+                "canada": "CA",
+                "mexico": "MX",
+                "brazil": "BR",
+                "argentina": "AR",
+                "chile": "CL",
+                "japan": "JP",
+                "china": "CN",
+                "india": "IN",
+                "south korea": "KR",
+                "thailand": "TH",
+                "vietnam": "VN",
+                "singapore": "SG",
+                "malaysia": "MY",
+                "indonesia": "ID",
+                "philippines": "PH",
+                "australia": "AU",
+                "new zealand": "NZ",
+                "south africa": "ZA",
+                "egypt": "EG",
+                "morocco": "MA",
+                "turkey": "TR",
+                "israel": "IL",
+                "uae": "AE",
+                "united arab emirates": "AE",
+                "dubai": "AE",  # Special case - Dubai is often searched as country
+            }
+            
+            # Normalize query for country detection
+            query_lower = query.lower().strip()
+            country_code = None
+            
+            # Check if query matches a country
+            if query_lower in country_map:
+                country_code = country_map[query_lower]
+            else:
+                # Check if query starts with a country name
+                for country_name, code in country_map.items():
+                    if query_lower.startswith(country_name + " "):
+                        country_code = code
+                        break
+            
             url = f"{PLACES_API_BASE}/autocomplete/json"
             params = {
                 "input": query,
                 "types": "(cities)",
                 "key": self.api_key,
             }
+            
+            # Add country component filter if we detected a country
+            if country_code:
+                params["components"] = f"country:{country_code}"
+            
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
+            
             if data.get("status") != "OK":
                 return []
-            preds = data.get("predictions", [])[:limit]
+            
+            preds = data.get("predictions", [])
+            
+            # Filter and score predictions based on place types (common approach without hardcoding)
+            # Strategy: Filter out administrative divisions and prefer actual cities using Google's type system
+            def score_prediction(prediction: dict[str, Any], query: str) -> tuple[float, dict[str, Any]]:
+                """Score a prediction based on place types and relevance."""
+                types = prediction.get("types", [])
+                description = prediction.get("description", "").lower()
+                query_lower = query.lower().strip()
+                
+                # Extract city name (first part before comma)
+                city_name = description.split(",")[0].strip().lower()
+                
+                # Score starts at 0
+                score = 0.0
+                
+                # STRONG PREFERENCE: "locality" type = actual cities (Google's official city type)
+                if "locality" in types:
+                    score += 15.0  # Strong boost for actual cities
+                elif "administrative_area_level_1" in types:
+                    score += 2.0  # States/provinces are acceptable but less preferred
+                else:
+                    score -= 5.0  # Unknown types are less preferred
+                    
+                # HEAVY FILTER: Administrative divisions (counties, districts)
+                # These are not cities and should be filtered out
+                if "administrative_area_level_2" in types or "administrative_area_level_3" in types:
+                    score -= 50.0  # Very heavy penalty to filter these out
+                
+                # Prefer exact city name matches
+                if query_lower == city_name:
+                    score += 10.0
+                elif query_lower in description:
+                    score += 5.0
+                
+                # Prefer shorter city names (often indicates major cities)
+                if len(city_name) < 20:
+                    score += 2.0
+                
+                # Heavily penalize very long city names (often administrative divisions)
+                if len(city_name) > 40:
+                    score -= 15.0
+                
+                # Minor penalty for unusual patterns
+                if "city" in description and query_lower not in city_name:
+                    score -= 2.0
+                
+                return (score, prediction)
+            
+            # Pre-filter: Remove results with undesirable types before scoring
+            # This is more efficient than scoring everything
+            filtered_before_scoring = []
+            for p in preds:
+                types = p.get("types", [])
+                description = p.get("description", "")
+                city_name = description.split(",")[0].strip() if description else ""
+                
+                # Skip administrative divisions entirely (counties, districts)
+                if "administrative_area_level_2" in types or "administrative_area_level_3" in types:
+                    continue
+                
+                # Skip very long city names (often administrative divisions)
+                if len(city_name) > 50:
+                    continue
+                
+                filtered_before_scoring.append(p)
+            
+            # Score and sort predictions
+            scored_preds = [score_prediction(p, query) for p in filtered_before_scoring]
+            scored_preds.sort(key=lambda x: x[0], reverse=True)
+            
+            # Take top results (Google's ranking + our type filtering)
+            filtered_preds = [p for score, p in scored_preds if score >= -10.0][:limit * 2]
+            
+            # Remove duplicates and obscure results
+            seen_cities = set()
+            final_preds = []
+            for p in filtered_preds:
+                description = p.get("description", "")
+                # Extract city name (first part before comma)
+                city_name = description.split(",")[0].strip().lower()
+                
+                # Skip if we've seen this city name already
+                if city_name in seen_cities:
+                    continue
+                
+                # Skip very long city names (often administrative divisions)
+                if len(city_name) > 50:
+                    continue
+                
+                seen_cities.add(city_name)
+                final_preds.append(p)
+                
+                if len(final_preds) >= limit:
+                    break
 
             def build_display_name(prediction: dict[str, Any]) -> str:
                 description = prediction.get("description") or ""
@@ -388,7 +561,7 @@ class PlacesService:
                     "place_id": p.get("place_id"),
                     "types": p.get("types", []),
                 }
-                for p in preds
+                for p in final_preds
             ]
         except Exception as e:
             print(f"Autocomplete error: {e}")

@@ -356,6 +356,8 @@ def send_trip_invite_email(
         True if sent successfully, False otherwise
     """
     # Construct invite link
+    # NOTE: FRONTEND_URL must be set to your public URL (e.g., ngrok URL) for emails to work
+    # Emails require absolute URLs, so relative paths won't work here
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
     invite_link = f"{frontend_url}/invite/{invite_id}"
 

@@ -46,11 +46,8 @@ async def create_trip_invite(
     cover_image_url = None
     if invite_data.destination:
         try:
-            base_url = (
-                str(request.base_url).rstrip("/")
-                if request
-                else "http://localhost:8765"
-            )
+            # Use empty string to get relative paths that work through nginx proxy
+            base_url = ""
             cover_qs = [
                 f"{invite_data.destination} skyline",
                 f"{invite_data.destination} cityscape",

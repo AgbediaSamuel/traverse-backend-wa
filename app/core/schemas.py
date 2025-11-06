@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class Activity(BaseModel):
@@ -12,7 +12,7 @@ class Activity(BaseModel):
     title: str
     location: str | None = None
     description: str | None = None
-    image: HttpUrl | None = None
+    image: str | None = Field(None, description="Image URL (absolute or relative)")
 
     # Google Places API enrichment fields (optional)
     place_id: str | None = Field(None, description="Google Place ID")
@@ -54,7 +54,7 @@ class ItineraryDocument(BaseModel):
     destination: str
     dates: str
     duration: str
-    cover_image: HttpUrl | None = None
+    cover_image: str | None = Field(None, description="Cover image URL (absolute or relative)")
     days: list[Day] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     # Optional group trip metadata
@@ -62,6 +62,14 @@ class ItineraryDocument(BaseModel):
         default=None, pattern="^(solo|group)$", description="Type of trip"
     )
     group: GroupInfo | None = None
+    # Extracted city name for browser title (extracted from destination)
+    city: str | None = Field(
+        default=None,
+        description=(
+            "City name extracted from destination "
+            "(e.g., 'Paris' from 'Paris, France')"
+        ),
+    )
 
 
 # =============================================================================
