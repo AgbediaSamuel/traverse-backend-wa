@@ -1,3 +1,4 @@
+import React from 'react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
 interface CoverPageProps {
@@ -11,7 +12,7 @@ interface CoverPageProps {
   participantCount?: number;
 }
 
-export function CoverPage({ tripName, travelerName, destination, duration, dates, coverImage, isGroupTrip, participantCount, printMode = false }: CoverPageProps) {
+export const CoverPage = React.memo(function CoverPage({ tripName, travelerName, destination, duration, dates, coverImage, isGroupTrip, participantCount, printMode = false }: CoverPageProps) {
   return (
     <div className="h-screen relative overflow-hidden bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
       {/* Background Image */}
@@ -20,6 +21,7 @@ export function CoverPage({ tripName, travelerName, destination, duration, dates
           src={coverImage}
           alt={destination}
           className="w-full h-full object-cover opacity-40"
+          loading="eager"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20"></div>
       </div>
@@ -35,13 +37,13 @@ export function CoverPage({ tripName, travelerName, destination, duration, dates
               <span className="text-white font-semibold">Group Trip{typeof participantCount === 'number' ? ` · ${participantCount} ${participantCount === 1 ? 'Traveler' : 'Travelers'}` : ''}</span>
             </div>
           )}
-          <h1 className="text-5xl mb-6 bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
+          <h1 className="text-4xl md:text-5xl mb-6 bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
             {tripName}
               </h1>
-              <h2 className="text-5xl mb-8 text-yellow-300">
+              <h2 className="text-4xl md:text-5xl mb-8 text-yellow-300">
                 {destination}
               </h2>
-          <div className="text-xl text-purple-200 mb-8">
+          <div className="text-lg md:text-xl text-purple-200 mb-8">
             {dates}
           </div>
           <div className="w-24 h-1 bg-gradient-to-r from-purple-400 to-pink-400 mx-auto rounded-full"></div>
@@ -54,4 +56,4 @@ export function CoverPage({ tripName, travelerName, destination, duration, dates
       <div className="absolute top-1/3 right-10 w-6 h-6 bg-yellow-300/60 rounded-full"></div>
     </div>
   );
-}
+});

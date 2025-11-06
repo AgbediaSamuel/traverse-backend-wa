@@ -1,17 +1,24 @@
+import logging
 from datetime import datetime
 
+from app.core.clerk_security import get_current_user_from_clerk
 from app.core.repository import repo
 from app.core.schemas import (
     CalendarResponseSubmit,
     FinalizeDatesRequest,
     InviteParticipantCreate,
     InviteParticipantUpdate,
+    RejectInviteRequest,
     ResendInvitesRequest,
     SendInvitesRequest,
     TripInviteCreate,
     TripInviteResponse,
+    UpdateParticipantPreferencesRequest,
+    User,
 )
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
@@ -19,10 +26,13 @@ router = APIRouter(prefix="/calendar", tags=["calendar"])
 @router.post("/invites", response_model=TripInviteResponse)
 async def create_trip_invite(
     invite_data: TripInviteCreate,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    current_user: User = Depends(get_current_user_from_clerk),
+    request: Request = None,
 ):
     """Create a new trip invite."""
-    clerk_user_id = x_clerk_user_id
+    from app.core.places_service import places_service
+
+    clerk_user_id = current_user.clerk_user_id
 
     # Get user info from database
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -31,6 +41,32 @@ async def create_trip_invite(
 
     organizer_email = user.email
     organizer_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+
+    # Fetch cover image if destination is provided
+    cover_image_url = None
+    if invite_data.destination:
+        try:
+            # Use empty string to get relative paths that work through nginx proxy
+            base_url = ""
+            cover_qs = [
+                f"{invite_data.destination} skyline",
+                f"{invite_data.destination} cityscape",
+                f"{invite_data.destination} landmark",
+            ]
+            for q in cover_qs:
+                res = places_service.search_places(
+                    location=invite_data.destination, query=q
+                )
+                if res and res[0].get("photo_reference"):
+                    url = places_service.get_proxy_photo_url(
+                        res[0]["photo_reference"], base_url
+                    )
+                    if url:
+                        cover_image_url = str(url)
+                        break
+        except Exception as e:
+            logger.debug(f"Failed to fetch cover image for invite: {e}")
+            # Non-fatal: continue without cover image
 
     invite_doc = repo.create_trip_invite(
         organizer_clerk_id=clerk_user_id,
@@ -42,25 +78,28 @@ async def create_trip_invite(
         date_range_end=invite_data.date_range_end,
         collect_preferences=invite_data.collect_preferences,
         trip_type=invite_data.trip_type,
+        cover_image=cover_image_url,
     )
 
     return TripInviteResponse(**invite_doc)
 
 
 @router.get("/invites", response_model=list[TripInviteResponse])
-async def get_my_invites(x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id")):
+async def get_my_invites(
+    current_user: User = Depends(get_current_user_from_clerk),
+):
     """Get all trip invites created by the authenticated user."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
     invites = repo.get_user_trip_invites(clerk_user_id)
     return [TripInviteResponse(**invite) for invite in invites]
 
 
 @router.get("/invites/received", response_model=list[TripInviteResponse])
 async def get_received_invites(
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id")
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Get all trip invites where the authenticated user is a participant."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get user email
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -73,7 +112,14 @@ async def get_received_invites(
 
 @router.get("/invites/{invite_id}", response_model=TripInviteResponse)
 async def get_trip_invite(
-    invite_id: str, x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id")
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Get a specific trip invite by ID."""
     invite = repo.get_trip_invite(invite_id)
@@ -81,7 +127,7 @@ async def get_trip_invite(
         raise HTTPException(status_code=404, detail="Trip invite not found")
 
     # Verify user has access (either organizer or participant)
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
     user = await repo.get_user_by_clerk_id(clerk_user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -99,11 +145,17 @@ async def get_trip_invite(
 
 @router.delete("/invites/{invite_id}")
 async def delete_trip_invite(
-    invite_id: str,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Delete a trip invite."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite and verify ownership
     invite = repo.get_trip_invite(invite_id)
@@ -125,12 +177,18 @@ async def delete_trip_invite(
 
 @router.post("/invites/{invite_id}/participants", response_model=TripInviteResponse)
 async def add_participant(
-    invite_id: str,
-    participant_data: InviteParticipantCreate,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    current_user: User = Depends(get_current_user_from_clerk),
+    participant_data: InviteParticipantCreate = Body(...),
 ):
     """Add a participant to a trip invite."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite and verify ownership
     invite = repo.get_trip_invite(invite_id)
@@ -177,13 +235,19 @@ async def add_participant(
     "/invites/{invite_id}/participants/{email}", response_model=TripInviteResponse
 )
 async def update_participant(
-    invite_id: str,
-    email: str,
-    participant_data: InviteParticipantUpdate,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    email: str = Path(..., pattern="^[^@]+@[^@]+\\.[^@]+$", description="Email"),
+    participant_data: InviteParticipantUpdate = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Update a participant's information."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite and verify ownership
     invite = repo.get_trip_invite(invite_id)
@@ -222,12 +286,18 @@ async def update_participant(
     "/invites/{invite_id}/participants/{email}", response_model=TripInviteResponse
 )
 async def remove_participant(
-    invite_id: str,
-    email: str,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    email: str = Path(..., pattern="^[^@]+@[^@]+\\.[^@]+$", description="Email"),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Remove a participant from a trip invite."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite and verify ownership
     invite = repo.get_trip_invite(invite_id)
@@ -258,12 +328,18 @@ async def remove_participant(
 
 @router.post("/invites/{invite_id}/send")
 async def send_invites(
-    invite_id: str,
-    request_data: SendInvitesRequest,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    request_data: SendInvitesRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Send invites to all participants."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite and verify ownership
     invite = repo.get_trip_invite(invite_id)
@@ -290,26 +366,73 @@ async def send_invites(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to send invites")
 
-    # TODO: Send actual emails using Mandrill/email service
-    # For now, just mark as sent in database
+    # Send actual emails to all participants
+    from app.core.email_service import send_trip_invite_email
+
+    organizer_name = invite.get("organizer_name", "Trip Organizer")
+    trip_name = invite.get("trip_name", "Group Trip")
+    destination = invite.get("destination")
+    date_range_start = invite.get("date_range_start")
+    date_range_end = invite.get("date_range_end")
+
+    sent_count = 0
+    failed_emails = []
+
+    for participant in invite.get("participants", []):
+        if participant.get("is_organizer"):
+            continue  # Skip organizer
+
+        email = participant.get("email")
+        if not email:
+            continue
+
+        try:
+            # Extract first_name from participant
+            recipient_first_name = participant.get("first_name", "").strip()
+
+            send_trip_invite_email(
+                to_email=email,
+                invite_id=invite_id,
+                organizer_name=organizer_name,
+                trip_name=trip_name,
+                destination=destination,
+                date_range_start=date_range_start,
+                date_range_end=date_range_end,
+                recipient_first_name=(
+                    recipient_first_name if recipient_first_name else None
+                ),
+            )
+            sent_count += 1
+        except Exception as e:
+            logger.error(f"Failed to send email to {email}: {e}")
+            failed_emails.append(email)
 
     return {
         "message": "Invites sent successfully",
         "invite_id": invite_id,
         "participants_count": len(invite.get("participants", [])),
+        "sent_count": sent_count,
+        "failed_count": len(failed_emails),
+        "failed_emails": failed_emails,
     }
 
 
 @router.post("/invites/{invite_id}/respond")
 async def respond_to_invite(
-    invite_id: str,
-    response_data: CalendarResponseSubmit,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    response_data: CalendarResponseSubmit = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Submit availability response to a trip invite."""
     from app.core.invite_utils import analyze_common_dates
 
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get user email
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -361,11 +484,17 @@ async def respond_to_invite(
 
 @router.post("/invites/{invite_id}/preferences-completed")
 async def mark_preferences_completed(
-    invite_id: str,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Mark that the participant has completed their preferences."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get user email
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -403,12 +532,18 @@ async def mark_preferences_completed(
 
 @router.post("/invites/{invite_id}/finalize-dates")
 async def finalize_invite_dates(
-    invite_id: str,
-    request_data: FinalizeDatesRequest,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    request_data: FinalizeDatesRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Finalize dates for a trip invite (organizer only)."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite
     invite = repo.get_trip_invite(invite_id)
@@ -508,14 +643,20 @@ async def finalize_invite_dates(
 
 @router.post("/invites/{invite_id}/resend")
 async def resend_invites(
-    invite_id: str,
-    request_data: ResendInvitesRequest,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    request_data: ResendInvitesRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Resend invites to selected participants (organizer only)."""
     from app.core.email_service import send_trip_invite_email
 
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite
     invite = repo.get_trip_invite(invite_id)
@@ -560,15 +701,27 @@ async def resend_invites(
 
     for email in request_data.participant_emails:
         try:
+            # Find participant to get first_name
+            participant = next(
+                (p for p in invite.get("participants", []) if p.get("email") == email),
+                None,
+            )
+            recipient_first_name = (
+                participant.get("first_name", "").strip() if participant else None
+            )
+
             send_trip_invite_email(
                 to_email=email,
                 invite_id=invite_id,
                 organizer_name=organizer_name,
                 trip_name=trip_name,
+                recipient_first_name=(
+                    recipient_first_name if recipient_first_name else None
+                ),
             )
             sent_count += 1
         except Exception as e:
-            print(f"Failed to send email to {email}: {e}")
+            logger.error(f"Failed to send email to {email}: {e}", exc_info=True)
             failed_emails.append(email)
 
     # Recalculate date analysis after resend
@@ -598,12 +751,18 @@ async def resend_invites(
 
 @router.post("/invites/{invite_id}/reject")
 async def reject_invite(
-    invite_id: str,
-    reject_data: dict,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    reject_data: RejectInviteRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Reject/decline a trip invite (participant only)."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get user email
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -617,7 +776,7 @@ async def reject_invite(
 
     # Verify user is a participant
     participant_emails = [p["email"] for p in invite.get("participants", [])]
-    user_email = reject_data.get("email") or user.email
+    user_email = reject_data.email or user.email
 
     if user_email not in participant_emails:
         raise HTTPException(
@@ -653,13 +812,19 @@ async def reject_invite(
 
 @router.patch("/invites/{invite_id}/participants/{email}/preferences")
 async def update_participant_preferences_setting(
-    invite_id: str,
-    email: str,
-    preference_data: dict,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+    email: str = Path(..., pattern="^[^@]+@[^@]+\\.[^@]+$", description="Email"),
+    preference_data: UpdateParticipantPreferencesRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Update whether to collect preferences from a specific participant."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get invite and verify ownership
     invite = repo.get_trip_invite(invite_id)
@@ -677,9 +842,7 @@ async def update_participant_preferences_setting(
 
     for participant in participants:
         if participant["email"] == email:
-            participant["collect_preferences"] = preference_data.get(
-                "collect_preferences", False
-            )
+            participant["collect_preferences"] = preference_data.collect_preferences
             participant_found = True
             break
 

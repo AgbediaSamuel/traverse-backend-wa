@@ -1,10 +1,11 @@
+import React from 'react';
 import { CheckCircle } from 'lucide-react';
 
 interface NotesPageProps {
   notes: string[];
 }
 
-export function NotesPage({ notes }: NotesPageProps) {
+export const NotesPage = React.memo(function NotesPage({ notes }: NotesPageProps) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-8">
       <div className="max-w-4xl mx-auto">
@@ -26,6 +27,6 @@ export function NotesPage({ notes }: NotesPageProps) {
       </div>
     </div>
   );
-}
+});
 
 

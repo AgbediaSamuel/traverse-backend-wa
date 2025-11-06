@@ -1,5 +1,6 @@
 """Email service using Resend API."""
 
+import logging
 import os
 from typing import Optional
 
@@ -7,6 +8,8 @@ import resend
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Initialize Resend with API key
 resend.api_key = os.getenv("RESEND_API_KEY", "")
@@ -87,11 +90,11 @@ class EmailService:
             }
 
             response = resend.Emails.send(params)
-            print(f"[Email] Sent invite to {recipient_email}: {response}")
+            logger.info(f"Sent invite to {recipient_email}: {response}")
             return True
 
         except Exception as e:
-            print(f"[Email] Error sending invite to {recipient_email}: {e}")
+            logger.error(f"Error sending invite to {recipient_email}: {e}")
             return False
 
     def send_itinerary_share(
@@ -168,11 +171,11 @@ class EmailService:
             }
 
             response = resend.Emails.send(params)
-            print(f"[Email] Sent itinerary share to {recipient_email}: {response}")
+            logger.info(f"Sent itinerary share to {recipient_email}: {response}")
             return True
 
         except Exception as e:
-            print(f"[Email] Error sending itinerary share to {recipient_email}: {e}")
+            logger.error(f"Error sending itinerary share to {recipient_email}: {e}")
             return False
 
     def send_preferences_reminder(
@@ -229,12 +232,12 @@ class EmailService:
             }
 
             response = resend.Emails.send(params)
-            print(f"[Email] Sent preferences reminder to {recipient_email}: {response}")
+            logger.info(f"Sent preferences reminder to {recipient_email}: {response}")
             return True
 
         except Exception as e:
-            print(
-                f"[Email] Error sending preferences reminder to {recipient_email}: {e}"
+            logger.error(
+                f"Error sending preferences reminder to {recipient_email}: {e}"
             )
             return False
 
@@ -322,3 +325,57 @@ class EmailService:
 
 # Singleton instance
 email_service = EmailService()
+
+
+def send_trip_invite_email(
+    to_email: str,
+    invite_id: str,
+    organizer_name: str,
+    trip_name: str,
+    destination: Optional[str] = None,
+    date_range_start: Optional[str] = None,
+    date_range_end: Optional[str] = None,
+    custom_message: Optional[str] = None,
+    recipient_first_name: Optional[str] = None,
+) -> bool:
+    """
+    Convenience function to send trip invite email.
+
+    Args:
+        to_email: Recipient email address
+        invite_id: Invite ID for the link
+        organizer_name: Name of the organizer
+        trip_name: Name of the trip
+        destination: Optional destination
+        date_range_start: Optional start date
+        date_range_end: Optional end date
+        custom_message: Optional custom message
+        recipient_first_name: Optional first name of recipient (falls back to email-based generation)
+
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    # Construct invite link
+    # NOTE: FRONTEND_URL must be set to your public URL (e.g., ngrok URL) for emails to work
+    # Emails require absolute URLs, so relative paths won't work here
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
+    invite_link = f"{frontend_url}/invite/{invite_id}"
+
+    # Use recipient_first_name if provided, otherwise generate from email
+    if recipient_first_name and recipient_first_name.strip():
+        recipient_name = recipient_first_name.strip()
+    else:
+        # Fallback: extract recipient name from email
+        recipient_name = to_email.split("@")[0].replace(".", " ").title()
+
+    return email_service.send_trip_invite(
+        recipient_email=to_email,
+        recipient_name=recipient_name,
+        organizer_name=organizer_name,
+        trip_name=trip_name,
+        destination=destination,
+        date_range_start=date_range_start,
+        date_range_end=date_range_end,
+        custom_message=custom_message,
+        invite_link=invite_link,
+    )

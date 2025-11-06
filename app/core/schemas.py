@@ -1,6 +1,7 @@
+import re
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class Activity(BaseModel):
@@ -11,7 +12,7 @@ class Activity(BaseModel):
     title: str
     location: str | None = None
     description: str | None = None
-    image: HttpUrl | None = None
+    image: str | None = Field(None, description="Image URL (absolute or relative)")
 
     # Google Places API enrichment fields (optional)
     place_id: str | None = Field(None, description="Google Place ID")
@@ -53,7 +54,7 @@ class ItineraryDocument(BaseModel):
     destination: str
     dates: str
     duration: str
-    cover_image: HttpUrl | None = None
+    cover_image: str | None = Field(None, description="Cover image URL (absolute or relative)")
     days: list[Day] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     # Optional group trip metadata
@@ -61,6 +62,14 @@ class ItineraryDocument(BaseModel):
         default=None, pattern="^(solo|group)$", description="Type of trip"
     )
     group: GroupInfo | None = None
+    # Extracted city name for browser title (extracted from destination)
+    city: str | None = Field(
+        default=None,
+        description=(
+            "City name extracted from destination "
+            "(e.g., 'Paris' from 'Paris, France')"
+        ),
+    )
 
 
 # =============================================================================
@@ -333,3 +342,213 @@ class ResendInvitesRequest(BaseModel):
     participant_emails: list[EmailStr] = Field(
         ..., description="List of participant emails to resend invites to"
     )
+
+
+# =============================================================================
+# Additional Request Schemas for Dict Endpoints
+# =============================================================================
+
+
+class ParticipantName(BaseModel):
+    """Schema for participant name only (no email required)."""
+
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+
+
+class RejectInviteRequest(BaseModel):
+    """Request to reject/decline an invite."""
+
+    email: EmailStr | None = Field(
+        None, description="Participant email (optional, defaults to authenticated user)"
+    )
+
+
+class UpdateParticipantPreferencesRequest(BaseModel):
+    """Request to update participant preferences collection setting."""
+
+    collect_preferences: bool = Field(
+        ..., description="Whether to collect preferences from this participant"
+    )
+
+
+class UpdateParticipantsRequest(BaseModel):
+    """Request to update itinerary participants list."""
+
+    participants: list[ParticipantName] = Field(
+        ..., max_length=20, description="List of participants"
+    )
+
+
+class ShareItineraryRequest(BaseModel):
+    """Request to share an itinerary with participants."""
+
+    participants: list[EmailStr] = Field(
+        ..., max_length=20, description="List of participant emails"
+    )
+    message: str | None = Field(
+        None, max_length=500, description="Optional message to include"
+    )
+
+
+# =============================================================================
+# Itinerary Generation Schemas
+# =============================================================================
+
+
+class ItineraryGenerateRequest(BaseModel):
+    """Schema for itinerary generation request."""
+
+    trip_name: str = Field(..., min_length=1, max_length=50)
+    traveler_name: str = Field(..., min_length=1, max_length=100)
+    destination: str = Field(..., min_length=1, max_length=200)
+    dates: str = Field(
+        ...,
+        description="Date range in format 'YYYY-MM-DD - YYYY-MM-DD'",
+    )
+    duration: str | None = Field(None, max_length=50)
+    clerk_user_id: str | None = Field(None, max_length=100)
+    trip_type: str = Field(default="solo", pattern="^(solo|group)$")
+    invite_id: str | None = Field(None, max_length=100)
+    participants: list[ParticipantName] = Field(default_factory=list, max_length=20)
+    notes: str | None = Field(None, max_length=1000)
+    vibe_notes: str | None = Field(None, max_length=500)
+
+    @field_validator("dates")
+    @classmethod
+    def validate_dates(cls, v: str) -> str:
+        """Validate date format and range."""
+        from datetime import datetime
+
+        if not v or not isinstance(v, str):
+            raise ValueError("dates is required and must be a string")
+
+        # Check format: "YYYY-MM-DD - YYYY-MM-DD"
+        parts = v.split(" - ")
+        if len(parts) != 2:
+            raise ValueError("Invalid date format. Expected 'YYYY-MM-DD - YYYY-MM-DD'")
+
+        start_s, end_s = parts[0].strip(), parts[1].strip()
+
+        # Validate date format
+        try:
+            start = datetime.fromisoformat(start_s)
+            end = datetime.fromisoformat(end_s)
+        except ValueError as e:
+            raise ValueError(f"Invalid date format: {e}") from e
+
+        # Validate date range
+        if end < start:
+            raise ValueError("End date must be after start date")
+
+        days_diff = (end - start).days + 1
+        if days_diff > 7:
+            raise ValueError("Trip duration cannot exceed 7 days")
+        if days_diff < 1:
+            raise ValueError("Trip duration must be at least 1 day")
+
+        return v
+
+    @field_validator("trip_name", "traveler_name", "destination")
+    @classmethod
+    def validate_string_fields(cls, v: str) -> str:
+        """Sanitize string fields by stripping whitespace."""
+        if not isinstance(v, str):
+            raise ValueError("Field must be a string")
+        return v.strip()
+
+    @field_validator("vibe_notes", "notes")
+    @classmethod
+    def validate_optional_text_fields(cls, v: str | None) -> str | None:
+        """Sanitize optional text fields."""
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("Field must be a string or None")
+        return v.strip()
+
+
+# =============================================================================
+# Path Parameter Validation Schemas
+# =============================================================================
+
+
+class ClerkUserId(BaseModel):
+    """Validated Clerk user ID from path parameters."""
+
+    clerk_user_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Clerk user ID (alphanumeric, underscores, hyphens only)",
+    )
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        """Validate and sanitize Clerk user ID."""
+        if not value or not isinstance(value, str):
+            raise ValueError("clerk_user_id must be a non-empty string")
+        value = value.strip()
+        if len(value) > 100:
+            raise ValueError("clerk_user_id exceeds maximum length")
+        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
+            raise ValueError(
+                "clerk_user_id contains invalid characters. "
+                "Only alphanumeric, underscores, and hyphens allowed"
+            )
+        return value
+
+
+class ItineraryId(BaseModel):
+    """Validated itinerary ID from path parameters."""
+
+    itinerary_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Itinerary ID (alphanumeric, underscores, hyphens only)",
+    )
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        """Validate and sanitize itinerary ID."""
+        if not value or not isinstance(value, str):
+            raise ValueError("itinerary_id must be a non-empty string")
+        value = value.strip()
+        if len(value) > 50:
+            raise ValueError("itinerary_id exceeds maximum length")
+        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
+            raise ValueError(
+                "itinerary_id contains invalid characters. "
+                "Only alphanumeric, underscores, and hyphens allowed"
+            )
+        return value
+
+
+class InviteId(BaseModel):
+    """Validated invite ID from path parameters."""
+
+    invite_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID (alphanumeric, underscores, hyphens only)",
+    )
+
+    @classmethod
+    def validate(cls, value: str) -> str:
+        """Validate and sanitize invite ID."""
+        if not value or not isinstance(value, str):
+            raise ValueError("invite_id must be a non-empty string")
+        value = value.strip()
+        if len(value) > 50:
+            raise ValueError("invite_id exceeds maximum length")
+        if not re.match(r"^[a-zA-Z0-9_-]+$", value):
+            raise ValueError(
+                "invite_id contains invalid characters. "
+                "Only alphanumeric, underscores, and hyphens allowed"
+            )
+        return value

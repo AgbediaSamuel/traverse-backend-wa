@@ -1,10 +1,24 @@
 import json
+import logging
+import re
+from datetime import datetime, timedelta
 from typing import Any
 
+from app.core.clerk_security import get_current_user_from_clerk
 from app.core.places_service import places_service
 from app.core.repository import repo
-from app.core.schemas import Activity, Day, ItineraryDocument
-from fastapi import APIRouter, Header, HTTPException, Request
+from app.core.schemas import (
+    Activity,
+    Day,
+    ItineraryDocument,
+    ItineraryGenerateRequest,
+    ShareItineraryRequest,
+    UpdateParticipantsRequest,
+    User,
+)
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/itineraries", tags=["itineraries"])
 
@@ -59,129 +73,109 @@ def _parse_itinerary_json_or_502(raw_text: str) -> ItineraryDocument:
     )
 
 
-@router.get("/sample", response_model=ItineraryDocument)
-def get_sample_itinerary() -> ItineraryDocument:
-    return ItineraryDocument(
-        trip_name="Vegas Weekend",
-        traveler_name="Sheriff",
-        destination="Las Vegas",
-        dates="March 15-17, 2025",
-        duration="Three Day Weekend",
-        cover_image=(
-            "https://images.unsplash.com/"
-            "photo-1683645012230-e3a3c1255434"
-            "?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080"
-        ),
-        days=[
-            Day(
-                date="Friday, March 15",
-                activities=[
-                    Activity(
-                        time="12:00 PM",
-                        title="Arrival & Check-in",
-                        location="Bellagio Hotel & Casino",
-                        description=(
-                            "Check into the Bellagio suite and enjoy fountain views."
-                        ),
-                        image=(
-                            "https://images.unsplash.com/"
-                            "photo-1683645012230-e3a3c1255434?crop=entropy&cs=tinysrgb"
-                            "&fit=max&fm=jpg&q=80&w=1080"
-                        ),
-                    )
-                ],
-            ),
-            Day(
-                date="Saturday, March 16",
-                activities=[
-                    Activity(
-                        time="10:00 AM",
-                        title="Brunch at Bacchanal",
-                        location="Caesars Palace",
-                        description="Legendary buffet experience.",
-                        image=(
-                            "https://images.unsplash.com/"
-                            "photo-1755862922067-8a0135afc1bb"
-                            "?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080"
-                        ),
-                    )
-                ],
-            ),
-        ],
-        notes=[
-            "Bring ID - required everywhere in Vegas",
-            "Set gambling budget beforehand",
-            "Stay hydrated - desert climate",
-        ],
-    )
+# Test endpoint - commented out
+# @router.get("/sample", response_model=ItineraryDocument)
+# def get_sample_itinerary() -> ItineraryDocument:
+#     return ItineraryDocument(
+#         trip_name="Vegas Weekend",
+#         traveler_name="Sheriff",
+#         destination="Las Vegas",
+#         dates="March 15-17, 2025",
+#         duration="Three Day Weekend",
+#         cover_image=(
+#             "https://images.unsplash.com/"
+#             "photo-1683645012230-e3a3c1255434"
+#             "?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080"
+#         ),
+#         days=[
+#             Day(
+#                 date="Friday, March 15",
+#                 activities=[
+#                     Activity(
+#                         time="12:00 PM",
+#                         title="Arrival & Check-in",
+#                         location="Bellagio Hotel & Casino",
+#                         description=(
+#                             "Check into the Bellagio suite and enjoy fountain views."
+#                         ),
+#                         image=(
+#                             "https://images.unsplash.com/"
+#                             "photo-1683645012230-e3a3c1255434?crop=entropy&cs=tinysrgb"
+#                             "&fit=max&fm=jpg&q=80&w=1080"
+#                         ),
+#                     )
+#                 ],
+#             ),
+#             Day(
+#                 date="Saturday, March 16",
+#                 activities=[
+#                     Activity(
+#                         time="10:00 AM",
+#                         title="Brunch at Bacchanal",
+#                         location="Caesars Palace",
+#                         description="Legendary buffet experience.",
+#                         image=(
+#                             "https://images.unsplash.com/"
+#                             "photo-1755862922067-8a0135afc1bb"
+#                             "?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080"
+#                         ),
+#                     )
+#                 ],
+#             ),
+#         ],
+#         notes=[
+#             "Bring ID - required everywhere in Vegas",
+#             "Set gambling budget beforehand",
+#             "Stay hydrated - desert climate",
+#         ],
+#     )
 
 
 # ----------------------------------------------
 # New deterministic generator (no LLM selection)
 # ----------------------------------------------
 @router.post("/generate2", response_model=dict[str, Any])
-def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+def generate_itinerary_v2(
+    payload: ItineraryGenerateRequest, request: Request
+) -> dict[str, Any]:
     """
     Deterministic itinerary generation using weighted scoring over Google Places
     results plus user/group preferences. No LLM is used for venue selection.
 
-    Expected payload: {
-      trip_name, traveler_name, destination, dates ("YYYY-MM-DD - YYYY-MM-DD"),
-      duration?, clerk_user_id?, trip_type? (solo|group), invite_id?, notes?, vibe_notes?
-    }
+    All input is validated using Pydantic schemas for security and data integrity.
     """
-    from datetime import datetime, timedelta
-
     from app.core.itinerary_planner import (
         calculate_daily_activities,
         get_budget_price_levels,
     )
     from app.core.preference_aggregator import aggregate_preferences
-    from pydantic import HttpUrl
 
-    trip_name = payload.get("trip_name") or ""
-    traveler_name = payload.get("traveler_name") or "Traveler"
-    destination = payload.get("destination") or ""
-    dates = payload.get("dates") or ""
-    duration = payload.get("duration") or ""
-    clerk_user_id = payload.get("clerk_user_id")
-    trip_type = payload.get("trip_type", "solo")
-    invite_id = payload.get("invite_id")
-    payload_participants = (
-        payload.get("participants") or []
-    )  # optional [{first_name,last_name}]
-    notes_text = (payload.get("notes") or "").lower()
-    vibe_notes = payload.get("vibe_notes") or ""  # Optional context for generation
+    # Extract validated data from schema
+    trip_name = payload.trip_name
+    traveler_name = payload.traveler_name
+    destination = payload.destination
+    dates = payload.dates
+    duration = payload.duration or ""
+    clerk_user_id = payload.clerk_user_id
+    trip_type = payload.trip_type
+    invite_id = payload.invite_id
+    payload_participants = payload.participants
+    notes_text = (payload.notes or "").lower()
+    vibe_notes = payload.vibe_notes or ""  # Optional context for generation
 
-    # Get base URL for proxy photo URLs
-    base_url = str(request.base_url).rstrip("/") if request else "http://localhost:8765"
+    # For proxy photo URLs, we need to determine the base URL
+    # When behind nginx proxy, request.base_url will be the proxy URL (e.g., http://localhost:8080/)
+    # We want to return relative paths that work through the proxy
+    # So we'll pass an empty string to get_proxy_photo_url, and it will return relative paths
+    base_url = ""
 
-    if not trip_name or not traveler_name or not destination or not dates:
-        raise HTTPException(
-            status_code=400,
-            detail="trip_name, traveler_name, destination and dates are required",
-        )
-
-    # Parse dates → list of day strings
-    try:
-        parts = dates.split(" - ")
-        if len(parts) != 2:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid date format. Expected 'YYYY-MM-DD - YYYY-MM-DD', got '{dates}'",
-            )
-        start_s, end_s = parts[0].strip(), parts[1].strip()
-        start = datetime.fromisoformat(start_s)
-        end = datetime.fromisoformat(end_s)
-        if (end - start).days + 1 > 7:
-            raise HTTPException(
-                status_code=400, detail="Trip duration cannot exceed 7 days"
-            )
-        day_list = [start + timedelta(days=i) for i in range((end - start).days + 1)]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid dates: {e!s}")
+    # Parse dates → list of day strings (dates already validated by schema)
+    # But we still need to parse them for use in the function
+    parts = dates.split(" - ")
+    start_s, end_s = parts[0].strip(), parts[1].strip()
+    start = datetime.fromisoformat(start_s)
+    end = datetime.fromisoformat(end_s)
+    day_list = [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # Load preferences (solo: user, group: aggregated if enabled)
     aggregated_prefs = None
@@ -214,9 +208,22 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
     interests = (
         aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
     )
-    other_interests_texts = (
-        aggregated_prefs.get("other_interests", []) if aggregated_prefs else []
+
+    raw_other_interests = (
+        aggregated_prefs.get("other_interests") if aggregated_prefs else None
     )
+    if isinstance(raw_other_interests, list):
+        other_interests_texts = [
+            str(item).strip() for item in raw_other_interests if str(item).strip()
+        ]
+    elif isinstance(raw_other_interests, str):
+        other_interests_texts = [
+            part.strip()
+            for part in re.split(r"[,\n]", raw_other_interests)
+            if part.strip()
+        ]
+    else:
+        other_interests_texts = []
 
     # Extract structured info from other_interests using NLP
     from app.core.preference_extractor import extract_preferences_from_text
@@ -740,7 +747,7 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
                     places_service.get_proxy_photo_url(v["photo_reference"], base_url)
                     or None
                 )
-                img = HttpUrl(url) if url else None
+                img = url  # Use string directly (can be relative or absolute)
             activities.append(
                 Activity(
                     time=slot,
@@ -774,7 +781,7 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
                             )
                             or None
                         )
-                        img = HttpUrl(url) if url else None
+                        img = url  # Use string directly (can be relative or absolute)
 
                     activities.append(
                         Activity(
@@ -880,8 +887,6 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
             )
 
             # Parse timing response
-            import re
-
             print(f"[Timing Debug] Raw LLM response: {timing_response[:300]}")
 
             timing_text = timing_response.strip()
@@ -1059,6 +1064,19 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
             "Check venue closures and events the day before.",
         ]
 
+    # Extract city name from destination for browser title
+    # Format: "Paris, France" -> "Paris" or "Las Vegas" -> "Las Vegas"
+    def extract_city(dest: str) -> str:
+        """Extract city name from destination string (before comma)."""
+        if not dest:
+            return ""
+        # Split by comma and take first part, trim whitespace
+        parts = dest.split(",")
+        city = parts[0].strip()
+        return city
+
+    city_name = extract_city(destination)
+
     # Build itinerary document (with optional group metadata)
     doc = ItineraryDocument(
         trip_name=trip_name,
@@ -1070,6 +1088,7 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
         days=days,
         notes=trip_notes,
         trip_type=trip_type if trip_type in ("solo", "group") else None,
+        city=city_name if city_name else None,
     )
 
     # Attach group metadata when applicable
@@ -1101,9 +1120,10 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
                         )
             # If no invite provided, but participants are in payload, attach them
             elif not invite_id and payload_participants:
+                # payload_participants is now a list of ParticipantName objects
                 for p in payload_participants:
-                    fn = (p.get("first_name") or p.get("firstName") or "").strip()
-                    ln = (p.get("last_name") or p.get("lastName") or "").strip()
+                    fn = p.first_name.strip()
+                    ln = p.last_name.strip()
                     if fn or ln:
                         group_participants.append(
                             GroupParticipant(first_name=fn, last_name=ln)
@@ -1132,7 +1152,7 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
                     res[0]["photo_reference"], base_url
                 )
                 if url:
-                    doc.cover_image = HttpUrl(url)
+                    doc.cover_image = url  # Use string directly (can be relative or absolute)
                     break
     except Exception:
         pass
@@ -1154,15 +1174,26 @@ def generate_itinerary_v2(payload: dict[str, Any], request: Request) -> dict[str
     return repo.get_itinerary(itn_id) or {"id": itn_id}
 
 
-@router.get("/user/{clerk_user_id}")
-def get_user_itineraries(clerk_user_id: str):
-    """Get all itineraries for a specific user."""
+@router.get("/user/me")
+async def get_user_itineraries(
+    current_user: User = Depends(get_current_user_from_clerk),
+):
+    """Get all itineraries for the authenticated user."""
+    clerk_user_id = current_user.clerk_user_id
     itineraries = repo.get_user_itineraries(clerk_user_id)
     return {"itineraries": itineraries}
 
 
 @router.get("/{itinerary_id}")
-def get_itinerary(itinerary_id: str):
+def get_itinerary(
+    itinerary_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Itinerary ID",
+    ),
+):
     data = repo.get_itinerary(itinerary_id)
     if not data:
         raise HTTPException(status_code=404, detail="not found")
@@ -1189,7 +1220,16 @@ def create_itinerary(doc: ItineraryDocument):
 
 
 @router.delete("/{itinerary_id}")
-def delete_itinerary(itinerary_id: str):
+async def delete_itinerary(
+    itinerary_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Itinerary ID",
+    ),
+    current_user: User = Depends(get_current_user_from_clerk),
+):
     """Delete an itinerary by ID and cascade delete linked invites."""
     # Find all invites linked to this itinerary
     linked_invites = list(
@@ -1207,14 +1247,65 @@ def delete_itinerary(itinerary_id: str):
     return {"message": "Itinerary deleted successfully"}
 
 
+@router.get("/{itinerary_id}/invite")
+async def get_itinerary_invite(
+    itinerary_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Itinerary ID",
+    ),
+    current_user: User = Depends(get_current_user_from_clerk),
+):
+    """Get the invite associated with an itinerary."""
+    clerk_user_id = current_user.clerk_user_id
+
+    # Get itinerary to verify ownership
+    itinerary = repo.get_itinerary(itinerary_id)
+    if not itinerary:
+        raise HTTPException(status_code=404, detail="Itinerary not found")
+
+    # Verify ownership
+    if itinerary.get("clerk_user_id") != clerk_user_id:
+        raise HTTPException(
+            status_code=403, detail="Only the itinerary owner can access this"
+        )
+
+    # Find invite linked to this itinerary
+    invite = repo.trip_invites_collection.find_one({"itinerary_id": itinerary_id})
+    if not invite:
+        raise HTTPException(
+            status_code=404, detail="No invite found for this itinerary"
+        )
+
+    invite.pop("_id", None)  # Remove MongoDB ObjectId
+
+    # Filter out organizer from participants
+    participants = [
+        p for p in invite.get("participants", []) if not p.get("is_organizer")
+    ]
+
+    # Return all non-organizer participants (with or without emails)
+    invite["participants"] = participants
+
+    return invite
+
+
 @router.patch("/{itinerary_id}/participants")
 async def update_itinerary_participants(
-    itinerary_id: str,
-    participants_data: dict,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    itinerary_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Itinerary ID",
+    ),
+    participants_data: UpdateParticipantsRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Update participants list for an itinerary."""
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get itinerary
     itinerary = repo.get_itinerary(itinerary_id)
@@ -1240,17 +1331,17 @@ async def update_itinerary_participants(
         }
 
     # Parse participants from request
-    participants_list = participants_data.get("participants", [])
+    participants_list = participants_data.participants
     group_participants = []
 
     for p in participants_list:
         group_participants.append(
             {
-                "first_name": p.get("first_name", ""),
-                "last_name": p.get("last_name", ""),
-                "email": p.get("email"),
-                "email_sent": p.get("email_sent", False),
-                "email_sent_at": p.get("email_sent_at"),
+                "first_name": p.first_name,
+                "last_name": p.last_name,
+                "email": None,  # ParticipantName doesn't include email
+                "email_sent": False,
+                "email_sent_at": None,
             }
         )
 
@@ -1269,14 +1360,22 @@ async def update_itinerary_participants(
 
 @router.post("/{itinerary_id}/share")
 async def share_itinerary(
-    itinerary_id: str,
-    share_data: dict,
-    x_clerk_user_id: str = Header(..., alias="X-Clerk-User-Id"),
+    itinerary_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Itinerary ID",
+    ),
+    share_data: ShareItineraryRequest = Body(...),
+    current_user: User = Depends(get_current_user_from_clerk),
 ):
     """Share an itinerary with participants by creating or updating an invite."""
+    from datetime import datetime
+
     from app.core.email_service import send_trip_invite_email
 
-    clerk_user_id = x_clerk_user_id
+    clerk_user_id = current_user.clerk_user_id
 
     # Get itinerary
     itinerary = repo.get_itinerary(itinerary_id)
@@ -1316,8 +1415,21 @@ async def share_itinerary(
     if existing_invite:
         existing_invite.pop("_id", None)  # Remove MongoDB ObjectId
         invite_id = existing_invite["id"]
+
+        # Update trip_name if it exists in itinerary document
+        if trip_name and trip_name != existing_invite.get("trip_name"):
+            repo.trip_invites_collection.update_one(
+                {"id": invite_id},
+                {
+                    "$set": {
+                        "trip_name": trip_name,
+                        "updated_at": datetime.utcnow(),
+                    }
+                },
+            )
+
         # Update existing invite with new participants
-        participant_emails = share_data.get("participant_emails", [])
+        participant_emails = share_data.participants
         organizer_name = share_data.get(
             "organizer_name", user.first_name or "Trip Organizer"
         )
@@ -1356,15 +1468,32 @@ async def share_itinerary(
 
         for email in participant_emails:
             try:
+                # Find participant to get first_name
+                updated_invite = repo.get_trip_invite(invite_id)
+                participant = next(
+                    (
+                        p
+                        for p in updated_invite.get("participants", [])
+                        if p.get("email") == email
+                    ),
+                    None,
+                )
+                recipient_first_name = (
+                    participant.get("first_name", "").strip() if participant else None
+                )
+
                 send_trip_invite_email(
                     to_email=email,
                     invite_id=invite_id,
                     organizer_name=organizer_name,
                     trip_name=trip_name,
+                    recipient_first_name=(
+                        recipient_first_name if recipient_first_name else None
+                    ),
                 )
                 sent_count += 1
             except Exception as e:
-                print(f"Failed to send email to {email}: {e}")
+                logger.error(f"Failed to send email to {email}: {e}", exc_info=True)
                 failed_emails.append(email)
 
         # Mark invites as sent
@@ -1399,7 +1528,7 @@ async def share_itinerary(
         repo.update_invite_itinerary_id(invite_id, itinerary_id)
 
         # Add participants
-        participant_emails = share_data.get("participant_emails", [])
+        participant_emails = share_data.participants
         organizer_name = share_data.get(
             "organizer_name", user.first_name or "Trip Organizer"
         )
@@ -1427,15 +1556,31 @@ async def share_itinerary(
 
         for email in participant_emails:
             try:
+                # Find participant to get first_name
+                participant = next(
+                    (
+                        p
+                        for p in repo.get_trip_invite(invite_id).get("participants", [])
+                        if p.get("email") == email
+                    ),
+                    None,
+                )
+                recipient_first_name = (
+                    participant.get("first_name", "").strip() if participant else None
+                )
+
                 send_trip_invite_email(
                     to_email=email,
                     invite_id=invite_id,
                     organizer_name=organizer_name,
                     trip_name=trip_name,
+                    recipient_first_name=(
+                        recipient_first_name if recipient_first_name else None
+                    ),
                 )
                 sent_count += 1
             except Exception as e:
-                print(f"Failed to send email to {email}: {e}")
+                logger.error(f"Failed to send email to {email}: {e}", exc_info=True)
                 failed_emails.append(email)
 
         # Mark invites as sent

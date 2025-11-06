@@ -34,5 +34,26 @@ source $(poetry env info --path)/bin/activate
 ./scripts/start.sh
 ```
 
+### Nginx Setup (for ngrok/local development)
+
+If using nginx reverse proxy for local development:
+
+1. Copy the nginx config to nginx's servers directory:
+   ```bash
+   sudo cp infra/nginx-traverse.conf /opt/homebrew/etc/nginx/servers/traverse.conf
+   # Or on Linux: sudo cp infra/nginx-traverse.conf /etc/nginx/sites-enabled/traverse.conf
+   ```
+
+2. Start/restart nginx using Homebrew:
+   ```bash
+   brew services start nginx
+   # Or to restart if already running:
+   brew services restart nginx
+   # Or to stop:
+   brew services stop nginx
+   ```
+
+3. Access the app at `http://localhost:8080` (nginx) instead of individual ports.
+
 
 

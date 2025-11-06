@@ -27,19 +27,16 @@ if os.path.basename(repo_root) not in {"tests", "unit", "integration"}:
 # Load environment variables
 load_dotenv()
 
-from app.core.clerk_auth import CLERK_JWT_KEY, CLERK_SECRET_KEY, ClerkAuth, clerk_auth
+from app.core.clerk_auth import CLERK_SECRET_KEY, ClerkAuth, clerk_auth
 
 
 def test_environment_variables():
     """Test if environment variables are loaded correctly"""
     print("Testing Environment Variables...")
     print(f"CLERK_SECRET_KEY: {'Set' if CLERK_SECRET_KEY else 'Missing'}")
-    print(f"CLERK_JWT_KEY: {'Set' if CLERK_JWT_KEY else 'Missing'}")
 
     if CLERK_SECRET_KEY:
         print(f"   Secret key preview: {CLERK_SECRET_KEY[:20]}...")
-    if CLERK_JWT_KEY:
-        print(f"   JWT key preview: {CLERK_JWT_KEY[:50]}...")
 
     print()
 

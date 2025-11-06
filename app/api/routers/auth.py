@@ -6,7 +6,7 @@ from app.core.schemas import (
     UserPreferences,
     UserPreferencesCreate,
 )
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Body, HTTPException, Path, status
 
 # Create the router
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -31,7 +31,15 @@ async def create_or_update_user(user_data: ClerkUserSync):
 
 
 @router.get("/users/{clerk_user_id}", response_model=User)
-async def get_user_by_clerk_id(clerk_user_id: str):
+async def get_user_by_clerk_id(
+    clerk_user_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Clerk user ID",
+    ),
+):
     """
     Get user data by Clerk user ID.
 
@@ -46,7 +54,9 @@ async def get_user_by_clerk_id(clerk_user_id: str):
 
 
 @router.get("/users/email/{email}", response_model=User)
-async def get_user_by_email(email: str):
+async def get_user_by_email(
+    email: str = Path(..., pattern="^[^@]+@[^@]+\\.[^@]+$", description="Email"),
+):
     """
     Get user data by email.
     """
@@ -59,7 +69,15 @@ async def get_user_by_email(email: str):
 
 
 @router.delete("/users/{clerk_user_id}")
-async def delete_user(clerk_user_id: str):
+async def delete_user(
+    clerk_user_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Clerk user ID",
+    ),
+):
     """
     Delete user from database (optional - for cleanup).
     """
@@ -80,7 +98,16 @@ async def delete_user(clerk_user_id: str):
 
 
 @router.patch("/users/{clerk_user_id}/onboarding", response_model=User)
-async def update_user_onboarding(clerk_user_id: str, onboarding_data: OnboardingUpdate):
+async def update_user_onboarding(
+    clerk_user_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Clerk user ID",
+    ),
+    onboarding_data: OnboardingUpdate = Body(...),
+):
     """
     Update user onboarding status.
 
@@ -107,7 +134,16 @@ async def update_user_onboarding(clerk_user_id: str, onboarding_data: Onboarding
 
 
 @router.post("/users/{clerk_user_id}/preferences", response_model=UserPreferences)
-async def save_user_preferences(clerk_user_id: str, preferences: UserPreferencesCreate):
+async def save_user_preferences(
+    clerk_user_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Clerk user ID",
+    ),
+    preferences: UserPreferencesCreate = Body(...),
+):
     """
     Save user travel preferences.
 
@@ -134,7 +170,15 @@ async def save_user_preferences(clerk_user_id: str, preferences: UserPreferences
 
 
 @router.get("/users/{clerk_user_id}/preferences", response_model=UserPreferences)
-async def get_user_preferences(clerk_user_id: str):
+async def get_user_preferences(
+    clerk_user_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Clerk user ID",
+    ),
+):
     """
     Get user travel preferences by Clerk user ID.
     """
@@ -155,19 +199,20 @@ async def get_user_preferences(clerk_user_id: str):
         )
 
 
-@router.get("/test")
-async def test_auth_endpoint():
-    """Test endpoint to verify the auth router is working"""
-    return {
-        "message": "Simple Auth API is working!",
-        "endpoints": {
-            "POST /auth/users": "Create/update user from Clerk data",
-            "GET /auth/users/{clerk_user_id}": "Get user by Clerk ID",
-            "GET /auth/users/email/{email}": "Get user by email",
-            "PATCH /auth/users/{clerk_user_id}/onboarding": "Update onboarding status",
-            "POST /auth/users/{clerk_user_id}/preferences": "Save user preferences",
-            "GET /auth/users/{clerk_user_id}/preferences": "Get user preferences",
-            "DELETE /auth/users/{clerk_user_id}": "Delete user",
-        },
-        "usage": "Call POST /auth/users from your NextJS frontend after Clerk auth",
-    }
+# Test endpoint - commented out
+# @router.get("/test")
+# async def test_auth_endpoint():
+#     """Test endpoint to verify the auth router is working"""
+#     return {
+#         "message": "Simple Auth API is working!",
+#         "endpoints": {
+#             "POST /auth/users": "Create/update user from Clerk data",
+#             "GET /auth/users/{clerk_user_id}": "Get user by Clerk ID",
+#             "GET /auth/users/email/{email}": "Get user by email",
+#             "PATCH /auth/users/{clerk_user_id}/onboarding": "Update onboarding status",
+#             "POST /auth/users/{clerk_user_id}/preferences": "Save user preferences",
+#             "GET /auth/users/{clerk_user_id}/preferences": "Get user preferences",
+#             "DELETE /auth/users/{clerk_user_id}": "Delete user",
+#         },
+#         "usage": "Call POST /auth/users from your NextJS frontend after Clerk auth",
+#     }

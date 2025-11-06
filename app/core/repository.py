@@ -4,7 +4,7 @@ import os
 import time
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from app.core.schemas import (
     ClerkUserSync,
@@ -165,6 +165,27 @@ class MongoDBRepo:
                         itineraries.append(itn)
                         seen_ids.add(itn["id"])
 
+            # Also include itineraries from invites where user is a participant
+            # This handles cases where emails weren't stored in the itinerary document
+            invites_with_itineraries = list(
+                self.trip_invites_collection.find(
+                    {
+                        "participants.email": user_email,
+                        "itinerary_id": {"$exists": True, "$ne": None},
+                    }
+                )
+            )
+
+            # Fetch itineraries linked to these invites
+            for invite in invites_with_itineraries:
+                itinerary_id = invite.get("itinerary_id")
+                if itinerary_id and itinerary_id not in seen_ids:
+                    itinerary = self.itineraries_collection.find_one({"id": itinerary_id})
+                    if itinerary:
+                        itinerary.pop("_id", None)
+                        itineraries.append(itinerary)
+                        seen_ids.add(itinerary_id)
+
         return itineraries
 
     # Users
@@ -201,37 +222,50 @@ class MongoDBRepo:
             }
         )
 
+        sanitized_first = clerk_data.first_name.strip() if clerk_data.first_name else None
+        sanitized_last = clerk_data.last_name.strip() if clerk_data.last_name else None
+        sanitized_full = (
+            clerk_data.full_name.strip()
+            if clerk_data.full_name and clerk_data.full_name.strip()
+            else " ".join(part for part in [sanitized_first, sanitized_last] if part)
+            or None
+        )
+        sanitized_image = (
+            clerk_data.image_url.strip() if clerk_data.image_url else None
+        )
+
         if existing_user:
-            # Update existing user with latest Clerk data
-            update_data = {
-                "clerk_user_id": clerk_data.clerk_user_id,
-                "email_verified": clerk_data.email_verified,
-                "first_name": clerk_data.first_name,
-                "last_name": clerk_data.last_name,
-                "full_name": clerk_data.full_name,
-                "image_url": clerk_data.image_url,
-                "updated_at": now,
-            }
+            updates: dict[str, Any] = {}
 
-            # Update username only if it's provided and not already set
-            if clerk_data.username and not existing_user.get("username"):
-                update_data["username"] = clerk_data.username
+            if clerk_data.email_verified and not existing_user.get("email_verified"):
+                updates["email_verified"] = True
 
-            # Ensure onboarding fields exist for existing users (migration)
+            if sanitized_first and not existing_user.get("first_name"):
+                updates["first_name"] = sanitized_first
+
+            if sanitized_last and not existing_user.get("last_name"):
+                updates["last_name"] = sanitized_last
+
+            if sanitized_full and not existing_user.get("full_name"):
+                updates["full_name"] = sanitized_full
+
+            if sanitized_image and not existing_user.get("image_url"):
+                updates["image_url"] = sanitized_image
+
+            if updates:
+                updates["updated_at"] = now
+                self.users_collection.update_one(
+                    {"_id": existing_user["_id"]}, {"$set": updates}
+                )
+                existing_user.update(updates)
+
+            existing_user.pop("_id", None)
+            existing_user.pop("hashed_password", None)
             if "onboarding_completed" not in existing_user:
-                update_data["onboarding_completed"] = False
+                existing_user["onboarding_completed"] = False
             if "onboarding_skipped" not in existing_user:
-                update_data["onboarding_skipped"] = False
-
-            self.users_collection.update_one(
-                {"_id": existing_user["_id"]}, {"$set": update_data}
-            )
-
-            # Return updated user
-            updated_user = self.users_collection.find_one({"_id": existing_user["_id"]})
-            updated_user.pop("_id", None)
-            updated_user.pop("hashed_password", None)  # Remove if present
-            return User(**updated_user)
+                existing_user["onboarding_skipped"] = False
+            return User(**existing_user)
 
         else:
             # Create new user from Clerk data
@@ -242,10 +276,10 @@ class MongoDBRepo:
                 "email_verified": clerk_data.email_verified,
                 "username": clerk_data.username
                 or f"user_{user_id[-8:]}",  # Generate username if not provided
-                "first_name": clerk_data.first_name,
-                "last_name": clerk_data.last_name,
-                "full_name": clerk_data.full_name,
-                "image_url": clerk_data.image_url,
+                "first_name": sanitized_first,
+                "last_name": sanitized_last,
+                "full_name": sanitized_full,
+                "image_url": sanitized_image,
                 "is_active": True,
                 "scopes": ["user"],
                 "onboarding_completed": False,  # New users haven't completed onboarding
@@ -371,6 +405,7 @@ class MongoDBRepo:
         date_range_end: str | None = None,
         collect_preferences: bool = False,
         trip_type: str = "group",
+        cover_image: str | None = None,
     ) -> dict:
         """Create a new trip invite."""
         invite_id = str(uuid.uuid4())
@@ -410,6 +445,7 @@ class MongoDBRepo:
             "trip_type": trip_type,
             "status": "draft",
             "participants": [organizer_participant],  # Organizer as first participant
+            "cover_image": cover_image,
             "created_at": now,
             "updated_at": now,
         }

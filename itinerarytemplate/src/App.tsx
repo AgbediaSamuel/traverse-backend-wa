@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CoverPage } from './components/CoverPage';
 import { DayPage } from './components/DayPage';
 import { NotesPage } from './components/NotesPage';
@@ -104,7 +104,7 @@ const defaultItineraryData = {
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState(0);
-  const [data, setData] = useState(defaultItineraryData);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
@@ -121,6 +121,7 @@ export default function App() {
       tripName: doc.trip_name ?? 'Trip',
       traveler: doc.traveler_name ?? 'Traveler',
       destination: doc.destination ?? 'Destination',
+      city: doc.city ?? null, // Extracted city name for browser title
       duration: doc.duration ?? 'Trip',
       dates: doc.dates ?? '',
       coverImage: doc.cover_image ?? placeholderImg,
@@ -146,18 +147,16 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const itineraryId = params.get('itineraryId');
     if (!itineraryId) {
-      // Still wait for hydration even with default data
+      // No itineraryId: use default data for demo/testing
+      setData(defaultItineraryData);
       setTimeout(() => {
         setLoading(false);
       }, 100);
-      return; // stay on default data
+      return;
     }
 
     setLoading(true);
     setError(null);
-    
-    // Minimum delay to ensure loading screen is visible (1.5 seconds)
-    const minDelayPromise = new Promise(resolve => setTimeout(resolve, 1500));
     
     const fetchPromise = fetch(endpoints.itinerary(itineraryId))
       .then(async (res) => {
@@ -169,43 +168,135 @@ export default function App() {
       })
       .catch((e) => setError(String(e)));
 
-    // Wait for fetch, minimum delay, AND React hydration to complete
-    Promise.all([fetchPromise, minDelayPromise])
-      .then(() => {
-        // Wait for next tick to ensure React has rendered
-        setTimeout(() => {
-          setLoading(false);
-        }, 100);
-      });
+    // Wait for fetch AND React hydration to complete
+    fetchPromise.then(() => {
+      // Wait for next tick to ensure React has rendered
+      setTimeout(() => {
+        setLoading(false);
+      }, 100);
+    });
   }, []);
 
   // Keep loading screen visible until both data is loaded AND React is hydrated
-  const showLoading = loading || !isHydrated;
+  const showLoading = loading || !isHydrated || !data;
 
-  const isGroupTrip = data.tripType === 'group';
-  const hasParticipants = Boolean(data.group?.participants && data.group.participants.length > 0);
+  // Update browser title with city name when data is loaded
+  useEffect(() => {
+    // Only update title when we have real data (not null)
+    if (!data) return;
+    
+    // Extract city name: use stored city field or parse from destination
+    let cityName: string | null = data.city;
+    
+    // Fallback: parse city from destination if city field not available (for old itineraries)
+    if (!cityName && data.destination) {
+      const parts = data.destination.split(",");
+      cityName = parts[0].trim() || null;
+    }
+    
+    // Update document title
+    if (cityName) {
+      document.title = cityName;
+    } else {
+      document.title = "My Itinerary"; // Fallback to generic title
+    }
+  }, [data]);
+
+  const isGroupTrip = data?.tripType === 'group';
+  const hasParticipants = Boolean(data?.group?.participants && data.group.participants.length > 0);
   const totalPages = useMemo(() => {
+    if (!data) return 0;
     // Cover + (Participants if present) + days + notes
     return 1 + (hasParticipants ? 1 : 0) + data.days.length + 1;
   }, [data, hasParticipants]);
 
-  const handleNext = () => {
+  // Preload images for adjacent pages
+  useEffect(() => {
+    if (loading || !isHydrated || !data) return;
+
+    const imagesToPreload: string[] = [];
+
+    // Preload next page images
     if (currentPage < totalPages - 1) {
-      setCurrentPage(currentPage + 1);
+      const nextPage = currentPage + 1;
+      
+      // Next page is cover page
+      if (nextPage === 0) {
+        imagesToPreload.push(data.coverImage);
+      }
+      // Next page is participants page (no images)
+      else if (hasParticipants && nextPage === 1) {
+        // No images to preload
+      }
+      // Next page is a day page
+      else {
+        const daysStartPage = hasParticipants ? 2 : 1;
+        if (nextPage >= daysStartPage && nextPage < daysStartPage + data.days.length) {
+          const dayIndex = nextPage - daysStartPage;
+          data.days[dayIndex]?.activities.forEach(activity => {
+            if (activity.image) imagesToPreload.push(activity.image);
+          });
+        }
+      }
     }
-  };
 
-  const handlePrevious = () => {
+    // Preload previous page images
     if (currentPage > 0) {
-      setCurrentPage(currentPage - 1);
+      const prevPage = currentPage - 1;
+      
+      // Previous page is cover page
+      if (prevPage === 0) {
+        imagesToPreload.push(data.coverImage);
+      }
+      // Previous page is participants page (no images)
+      else if (hasParticipants && prevPage === 1) {
+        // No images to preload
+      }
+      // Previous page is a day page
+      else {
+        const daysStartPage = hasParticipants ? 2 : 1;
+        if (prevPage >= daysStartPage && prevPage < daysStartPage + data.days.length) {
+          const dayIndex = prevPage - daysStartPage;
+          data.days[dayIndex]?.activities.forEach(activity => {
+            if (activity.image) imagesToPreload.push(activity.image);
+          });
+        }
+      }
     }
-  };
 
-  const renderCurrentPage = () => {
+    // Preload images in background
+    imagesToPreload.forEach(src => {
+      const img = new Image();
+      img.src = src;
+    });
+  }, [currentPage, totalPages, data, loading, isHydrated, hasParticipants]);
+
+  const handleNext = useCallback(() => {
+    setCurrentPage(prev => {
+      if (prev < totalPages - 1) {
+        return prev + 1;
+      }
+      return prev;
+    });
+  }, [totalPages]);
+
+  const handlePrevious = useCallback(() => {
+    setCurrentPage(prev => {
+      if (prev > 0) {
+        return prev - 1;
+      }
+      return prev;
+    });
+  }, []);
+
+  const renderCurrentPage = useMemo(() => {
+    if (!data) return null;
+    
     // Page 0: Cover
     if (currentPage === 0) {
       return (
         <CoverPage
+          key="cover"
           tripName={data.tripName}
           travelerName={data.traveler}
           destination={data.destination}
@@ -222,6 +313,7 @@ export default function App() {
     if (hasParticipants && currentPage === 1) {
       return (
         <ParticipantsPage
+          key="participants"
           participants={data.group.participants}
           collectPreferences={data.group.collect_preferences ?? false}
         />
@@ -237,6 +329,7 @@ export default function App() {
       const dayIndex = currentPage - daysStartPage;
       return (
         <DayPage
+          key={`day-${dayIndex}`}
           dayNumber={data.days[dayIndex].dayNumber}
           date={data.days[dayIndex].date}
           activities={data.days[dayIndex].activities}
@@ -245,8 +338,8 @@ export default function App() {
     }
 
     // Last page: Notes
-    return <NotesPage notes={data.notes} />;
-  };
+    return <NotesPage key="notes" notes={data.notes} />;
+  }, [currentPage, data, hasParticipants, isGroupTrip]);
 
   return (
     <div className="relative">
@@ -258,13 +351,13 @@ export default function App() {
       )}
       {!showLoading && !error && (
         <>
-      {renderCurrentPage()}
-      <NavigationControls
-        currentPage={currentPage}
-        totalPages={totalPages}
-        onNext={handleNext}
-        onPrevious={handlePrevious}
-      />
+          {renderCurrentPage}
+          <NavigationControls
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onNext={handleNext}
+            onPrevious={handlePrevious}
+          />
         </>
       )}
     </div>
