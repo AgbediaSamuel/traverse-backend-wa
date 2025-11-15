@@ -55,6 +55,8 @@ class MongoDBRepo:
         self.users_collection = self.db.users
         self.preferences_collection = self.db.user_preferences
         self.trip_invites_collection = self.db.trip_invites
+        self.cover_images_collection = self.db.cover_images
+        self.destination_profiles_collection = self.db.destination_profiles
 
         # Test connection and create indexes only if connection works
         try:
@@ -65,6 +67,10 @@ class MongoDBRepo:
             # Create indexes for better performance (only if connection works)
             try:
                 self.users_collection.create_index("email", unique=True)
+                self.cover_images_collection.create_index("destination", unique=True)
+                self.destination_profiles_collection.create_index(
+                    "destination", unique=True
+                )
                 print("Database indexes created")
             except Exception as index_error:
                 print(f"Index creation failed (might already exist): {index_error}")
@@ -180,7 +186,9 @@ class MongoDBRepo:
             for invite in invites_with_itineraries:
                 itinerary_id = invite.get("itinerary_id")
                 if itinerary_id and itinerary_id not in seen_ids:
-                    itinerary = self.itineraries_collection.find_one({"id": itinerary_id})
+                    itinerary = self.itineraries_collection.find_one(
+                        {"id": itinerary_id}
+                    )
                     if itinerary:
                         itinerary.pop("_id", None)
                         itineraries.append(itinerary)
@@ -222,7 +230,9 @@ class MongoDBRepo:
             }
         )
 
-        sanitized_first = clerk_data.first_name.strip() if clerk_data.first_name else None
+        sanitized_first = (
+            clerk_data.first_name.strip() if clerk_data.first_name else None
+        )
         sanitized_last = clerk_data.last_name.strip() if clerk_data.last_name else None
         sanitized_full = (
             clerk_data.full_name.strip()
@@ -230,9 +240,7 @@ class MongoDBRepo:
             else " ".join(part for part in [sanitized_first, sanitized_last] if part)
             or None
         )
-        sanitized_image = (
-            clerk_data.image_url.strip() if clerk_data.image_url else None
-        )
+        sanitized_image = clerk_data.image_url.strip() if clerk_data.image_url else None
 
         if existing_user:
             updates: dict[str, Any] = {}
@@ -284,6 +292,7 @@ class MongoDBRepo:
                 "scopes": ["user"],
                 "onboarding_completed": False,  # New users haven't completed onboarding
                 "onboarding_skipped": False,  # New users haven't skipped onboarding
+                "first_itinerary_email_sent": False,  # New users haven't received first email
                 "created_at": now,
                 "updated_at": now,
             }
@@ -307,8 +316,9 @@ class MongoDBRepo:
                 user_doc["onboarding_completed"] = False
             if "onboarding_skipped" not in user_doc:
                 user_doc["onboarding_skipped"] = False
+            if "first_itinerary_email_sent" not in user_doc:
+                user_doc["first_itinerary_email_sent"] = False
 
-            print(user_doc)
             return User(**user_doc)
         return None
 
@@ -739,6 +749,78 @@ class MongoDBRepo:
             },
         )
         return result.modified_count > 0
+
+    # Cover Images
+    def get_cover_image(self, destination: str) -> dict | None:
+        """Get cached cover image for a destination."""
+        cover_doc = self.cover_images_collection.find_one({"destination": destination})
+        if cover_doc:
+            cover_doc.pop("_id", None)  # Remove MongoDB ObjectId
+        return cover_doc
+
+    def save_cover_image(
+        self,
+        destination: str,
+        city: str,
+        country: str,
+        image_data: dict[str, Any],
+    ) -> bool:
+        """Save cover image data to cache."""
+        cover_doc = {
+            "destination": destination,
+            "city": city,
+            "country": country,
+            "unsplash_image_id": image_data.get("id"),
+            "image_url": image_data.get("urls", {}).get("regular"),
+            "image_url_small": image_data.get("urls", {}).get("small"),
+            "image_url_thumb": image_data.get("urls", {}).get("thumb"),
+            "photographer_name": image_data.get("user", {}).get("name"),
+            "photographer_username": image_data.get("user", {}).get("username"),
+            "unsplash_url": image_data.get("links", {}).get("html"),
+            "query_used": image_data.get("query_used", ""),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+
+        # Upsert: update if exists, insert if not
+        result = self.cover_images_collection.update_one(
+            {"destination": destination},
+            {"$set": cover_doc},
+            upsert=True,
+        )
+        return result.upserted_id is not None or result.modified_count > 0
+
+    # Destination Profiles
+    def get_destination_profile(self, destination: str) -> dict | None:
+        """Get cached destination profile (available categories) for a city."""
+        profile_doc = self.destination_profiles_collection.find_one(
+            {"destination": destination}
+        )
+        if profile_doc:
+            profile_doc.pop("_id", None)  # Remove MongoDB ObjectId
+            # Convert list back to set
+            if "categories" in profile_doc and isinstance(
+                profile_doc["categories"], list
+            ):
+                profile_doc["categories"] = set(profile_doc["categories"])
+        return profile_doc
+
+    def save_destination_profile(self, destination: str, categories: set[str]) -> bool:
+        """Save destination profile (available categories) to cache."""
+        profile_doc = {
+            "destination": destination,
+            "categories": list(categories),  # Convert set to list for MongoDB
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+        }
+
+        # Upsert: update if exists, insert if not
+        result = self.destination_profiles_collection.update_one(
+            {"destination": destination},
+            {"$set": profile_doc},
+            upsert=True,
+        )
+        return result.upserted_id is not None or result.modified_count > 0
 
 
 # Create a single instance to be used throughout the app

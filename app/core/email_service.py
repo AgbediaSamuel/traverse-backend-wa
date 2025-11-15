@@ -125,13 +125,12 @@ class EmailService:
         try:
             html_content = f"""
             <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <div style="text-align: center; padding: 20px 0;">
-                            <h1 style="color: #a1f800; margin: 0;">🌍 Traverse</h1>
-                        </div>
-                        
-                        <h2 style="color: #333;">Hey {recipient_name}!</h2>
+                <head>
+                    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Montserrat', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #ffffff;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 30px 20px;">
+                        <h2 style="color: #333; font-family: 'Montserrat', Arial, sans-serif;">Hey {recipient_name}!</h2>
                         <p><strong>{organizer_name}</strong> has created an itinerary for your group trip and wants to share it with you:</p>
                         
                         <div style="background-color: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
@@ -176,69 +175,6 @@ class EmailService:
 
         except Exception as e:
             logger.error(f"Error sending itinerary share to {recipient_email}: {e}")
-            return False
-
-    def send_preferences_reminder(
-        self,
-        recipient_email: str,
-        recipient_name: str,
-        organizer_name: str,
-        trip_name: str,
-        preferences_link: str,
-    ) -> bool:
-        """
-        Send a reminder email to complete preferences.
-
-        Args:
-            recipient_email: Email address of the participant
-            recipient_name: Full name of the participant
-            organizer_name: Name of the trip organizer
-            trip_name: Name of the trip
-            preferences_link: Link to complete preferences
-
-        Returns:
-            True if email was sent successfully, False otherwise
-        """
-        try:
-            html_content = f"""
-            <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #a1f800;">Hey {recipient_name}!</h2>
-                        <p>This is a friendly reminder from {organizer_name} to complete your travel preferences for <strong>{trip_name}</strong>.</p>
-                        <p>Your input will help create the perfect itinerary for everyone!</p>
-                        <div style="margin: 30px 0; text-align: center;">
-                            <a href="{preferences_link}" style="background-color: #a1f800; color: black; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-                                Complete Preferences
-                            </a>
-                        </div>
-                        <p style="color: #666; font-size: 14px;">
-                            If you have any questions, reach out to {organizer_name}.
-                        </p>
-                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-                        <p style="color: #999; font-size: 12px; text-align: center;">
-                            Sent by Traverse - Your AI Travel Companion
-                        </p>
-                    </div>
-                </body>
-            </html>
-            """
-
-            params = {
-                "from": f"Traverse <{self.sender_email}>",
-                "to": [recipient_email],
-                "subject": f"⏰ Don't forget to set your preferences for {trip_name}",
-                "html": html_content,
-            }
-
-            response = resend.Emails.send(params)
-            logger.info(f"Sent preferences reminder to {recipient_email}: {response}")
-            return True
-
-        except Exception as e:
-            logger.error(
-                f"Error sending preferences reminder to {recipient_email}: {e}"
-            )
             return False
 
     def _build_invite_email_html(
@@ -287,8 +223,7 @@ class EmailService:
                     </p>
                     
                     <p style="font-size: 16px; color: #333; margin: 0 0 24px 0; font-family: 'Montserrat', Arial, sans-serif;">
-                        <span style="display: inline-block; vertical-align: middle; margin-right: 8px;">{arrow_icon_inline}</span>
-                        Tap below to <strong style="font-weight: 600;">add your available dates</strong> and help the group lock in the trip:
+                        <span style="display: inline-block; vertical-align: middle; margin-right: 8px;">{arrow_icon_inline}</span>Tap below to <strong style="font-weight: 600;">add your available dates</strong> and help the group lock in the trip:
                     </p>
                     
                     <div style="margin: 32px 0; text-align: center;">
@@ -321,6 +256,199 @@ class EmailService:
         """
 
         return html
+
+    def send_first_itinerary_email(
+        self,
+        recipient_email: str,
+        recipient_first_name: str,
+        destination: str,
+        trip_name: str,
+        trip_dates: str,
+        itinerary_link: str,
+    ) -> bool:
+        """
+        Send email when user creates their first itinerary.
+
+        Args:
+            recipient_email: Email address of the user
+            recipient_first_name: First name of the user
+            destination: Trip destination
+            trip_name: Name of the trip
+            trip_dates: Formatted trip dates
+            itinerary_link: Link to view the itinerary
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        try:
+            feedback_form_url = "https://docs.google.com/forms/d/1C7dirJFuA76XrdDW0ZOcu0SQR5BqAcwHwZcOXqUzD3c/viewform?edit_requested=true"
+
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Montserrat', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #ffffff;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 30px 20px;">
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">Hi {recipient_first_name},</p>
+                        
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            🎉 <strong style="font-weight: 600;">Congratulations on creating your first itinerary with Traverse!</strong>
+                        </p>
+                        
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            Your itinerary for <strong style="font-weight: 600;">{destination}</strong> is ready — packed with restaurants, activities, and hidden gems built around your preferences.
+                        </p>
+                        
+                        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>📅 Trip:</strong> {trip_name}</p>
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>🗓️ Dates:</strong> {trip_dates}</p>
+                        </div>
+
+                        <div style="margin: 32px 0; text-align: center;">
+                            <a href="{itinerary_link}" style="background-color: #a1f800; color: #000000; padding: 14px 32px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; display: inline-block; border: 2px solid rgba(0, 0, 0, 0.1); font-family: 'Montserrat', Arial, sans-serif; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);">
+                                View your itinerary →
+                            </a>
+                        </div>
+
+                        <p style="font-size: 16px; color: #333; margin: 32px 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            Thanks for being an early user. Your feedback helps us improve.
+                        </p>
+
+                        <div style="margin: 24px 0; text-align: center;">
+                            <a href="{feedback_form_url}" style="color: #a1f800; text-decoration: underline; font-size: 16px; font-weight: 600; font-family: 'Montserrat', Arial, sans-serif;">
+                                Share your feedback →
+                            </a>
+                        </div>
+
+                        <p style="font-size: 16px; color: #333; margin: 32px 0 0 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            Let's make sure this one <em>actually</em> leaves the group chat
+                        </p>
+                        
+                        <p style="font-size: 16px; color: #333; margin: 32px 0 0 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            — Team Traverse
+                        </p>
+
+                        <hr style="border: none; border-top: 1px solid #eeeeee; margin: 40px 0 20px 0;">
+                        
+                        <p style="color: #999999; font-size: 12px; text-align: center; margin: 0; line-height: 1.5; font-family: 'Montserrat', Arial, sans-serif;">
+                            This email was sent from an unmonitored address. Please do not reply to this email.<br>
+                            If you have questions, please visit Traverse.
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+
+            params = {
+                "from": f"Traverse <{self.sender_email}>",
+                "to": [recipient_email],
+                "subject": f"Your {destination} itinerary is ready",
+                "html": html_content,
+            }
+
+            response = resend.Emails.send(params)
+            logger.info(f"Sent first itinerary email to {recipient_email}: {response}")
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Error sending first itinerary email to {recipient_email}: {e}"
+            )
+            return False
+
+    def send_all_participants_responded_email(
+        self,
+        organizer_email: str,
+        organizer_first_name: str,
+        destination: str,
+        trip_name: str,
+        group_size: int,
+        generate_link: str,
+    ) -> bool:
+        """
+        Send email to organizer when all participants have responded.
+
+        Args:
+            organizer_email: Email address of the organizer
+            organizer_first_name: First name of the organizer
+            destination: Trip destination
+            trip_name: Name of the trip
+            group_size: Number of travelers (including organizer)
+            generate_link: Link to generate the itinerary
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        try:
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Montserrat', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #ffffff;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 30px 20px;">
+                        {self._get_logo_html()}
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">Hi {organizer_first_name},</p>
+                        
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            🎉 <strong style="font-weight: 600;">Everyone's in!</strong> Your group has submitted their dates and preferences for <strong style="font-weight: 600;">"{trip_name}"</strong> — now it's your turn to bring it all together.
+                        </p>
+                        
+                        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>📍 Destination:</strong> {destination}</p>
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>👥 Group Size:</strong> {group_size} travelers</p>
+                        </div>
+
+                        <p style="font-size: 16px; color: #333; margin: 0 0 24px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            We've analyzed everyone's inputs to suggest the best plan for your crew.
+                        </p>
+
+                        <div style="margin: 32px 0; text-align: center;">
+                            <a href="{generate_link}" style="background-color: #a1f800; color: #000000; padding: 14px 32px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; display: inline-block; border: 2px solid rgba(0, 0, 0, 0.1); font-family: 'Montserrat', Arial, sans-serif; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);">
+                                Generate Itinerary →
+                            </a>
+                        </div>
+
+                        <p style="font-size: 16px; color: #333; margin: 32px 0 0 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            Let's make sure this one <em>actually</em> leaves the group chat
+                        </p>
+                        
+                        <p style="font-size: 16px; color: #333; margin: 32px 0 0 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            — Team Traverse
+                        </p>
+
+                        <hr style="border: none; border-top: 1px solid #eeeeee; margin: 40px 0 20px 0;">
+                        
+                        <p style="color: #999999; font-size: 12px; text-align: center; margin: 0; line-height: 1.5; font-family: 'Montserrat', Arial, sans-serif;">
+                            This email was sent from an unmonitored address. Please do not reply to this email.<br>
+                            If you have questions, please visit Traverse.
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+
+            params = {
+                "from": f"Traverse <{self.sender_email}>",
+                "to": [organizer_email],
+                "subject": f"Your group's ready — time to finalize your {destination} trip",
+                "html": html_content,
+            }
+
+            response = resend.Emails.send(params)
+            logger.info(
+                f"Sent all participants responded email to {organizer_email}: {response}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Error sending all participants responded email to {organizer_email}: {e}"
+            )
+            return False
 
 
 # Singleton instance

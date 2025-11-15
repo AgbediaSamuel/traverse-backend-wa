@@ -58,6 +58,38 @@ class PlacesService:
             print(f"Error geocoding location: {e}")
             return None
 
+    def geocode_get_place_id(self, location: str) -> str | None:
+        """
+        Geocode a location and return its Google Place ID.
+
+        Args:
+            location: City/destination name (e.g., "Lagos, Nigeria")
+
+        Returns:
+            Place ID string or None if geocoding fails
+        """
+        geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+        geocode_params = {"address": location, "key": self.api_key}
+
+        try:
+            geocode_response = requests.get(
+                geocode_url, params=geocode_params, timeout=10
+            )
+            geocode_response.raise_for_status()
+            geocode_data = geocode_response.json()
+
+            if geocode_data.get("status") != "OK" or not geocode_data.get("results"):
+                return None
+
+            # Extract place_id from the first result
+            result = geocode_data["results"][0]
+            place_id = result.get("place_id")
+            return place_id
+
+        except Exception as e:
+            print(f"Error geocoding for place_id: {e}")
+            return None
+
     def search_places(
         self,
         location: str,
@@ -68,6 +100,7 @@ class PlacesService:
         require_photo: bool = False,
         allowed_types: list[str] | None = None,
         max_pages: int = 1,
+        place_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search for places using Text Search API.
@@ -78,34 +111,63 @@ class PlacesService:
             radius: Search radius in meters (default 5000m = 5km)
             min_rating: Minimum rating filter (default 3.5)
             price_level: List of acceptable price levels [1-4] (optional)
+            place_id: Optional Google Place ID (more reliable than geocoding)
 
         Returns:
             List of place dictionaries with basic info
         """
-        # First, geocode the location to get coordinates
-        geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
-        geocode_params = {"address": location, "key": self.api_key}
+        # Get coordinates: prefer place_id if provided, otherwise geocode
+        lat = None
+        lng = None
 
-        try:
-            geocode_response = requests.get(
-                geocode_url,
-                params=geocode_params,
-                timeout=10,
-            )
-            geocode_response.raise_for_status()
-            geocode_data = geocode_response.json()
+        if place_id:
+            # Use Place Details API to get coordinates (more reliable)
+            try:
+                place_details = self.get_place_details(place_id)
+                if (
+                    place_details
+                    and place_details.get("lat")
+                    and place_details.get("lng")
+                ):
+                    lat = place_details["lat"]
+                    lng = place_details["lng"]
+                    print(f"[search_places] Using place_id {place_id} → ({lat}, {lng})")
+                else:
+                    print(
+                        f"[search_places] Failed to get coordinates from place_id, falling back to geocoding"
+                    )
+            except Exception as e:
+                print(
+                    f"[search_places] Error getting place details for place_id: {e}, falling back to geocoding"
+                )
 
-            if geocode_data.get("status") != "OK" or not geocode_data.get("results"):
-                status = geocode_data.get("status")
-                print(f"Geocoding failed for {location}: {status}")
+        if lat is None or lng is None:
+            # Fall back to geocoding if place_id not provided or failed
+            geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+            geocode_params = {"address": location, "key": self.api_key}
+
+            try:
+                geocode_response = requests.get(
+                    geocode_url,
+                    params=geocode_params,
+                    timeout=10,
+                )
+                geocode_response.raise_for_status()
+                geocode_data = geocode_response.json()
+
+                if geocode_data.get("status") != "OK" or not geocode_data.get(
+                    "results"
+                ):
+                    status = geocode_data.get("status")
+                    print(f"Geocoding failed for {location}: {status}")
+                    return []
+
+                lat = geocode_data["results"][0]["geometry"]["location"]["lat"]
+                lng = geocode_data["results"][0]["geometry"]["location"]["lng"]
+
+            except Exception as e:
+                print(f"Error geocoding location: {e}")
                 return []
-
-            lat = geocode_data["results"][0]["geometry"]["location"]["lat"]
-            lng = geocode_data["results"][0]["geometry"]["location"]["lng"]
-
-        except Exception as e:
-            print(f"Error geocoding location: {e}")
-            return []
 
         # Now search for places near those coordinates
         search_url = f"{PLACES_API_BASE}/textsearch/json"
@@ -316,12 +378,12 @@ class PlacesService:
         """
         if not photo_reference:
             return None
-        
+
         # Always use relative path /api/places/photo when behind nginx proxy
         # This works correctly when proxied through ngrok
         if not base_url:
             return f"/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
-        
+
         # If base_url is provided, ensure it includes /api prefix
         base = base_url.rstrip("/")
         # Check if base_url already includes /api, if not add it
@@ -330,6 +392,106 @@ class PlacesService:
         else:
             return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
 
+    def get_destination_cover_photo(
+        self,
+        destination: str,
+        *,
+        base_url: str = "",
+        queries: list[str] | None = None,
+    ) -> str | None:
+        """
+        Fetch a high-quality cover photo for a destination using scenic queries.
+        """
+        scenic_queries = queries or [
+            f"{destination} skyline",
+            f"{destination} cityscape",
+            f"{destination} landmark",
+            f"{destination} aerial view",
+            f"best attractions in {destination}",
+        ]
+
+        scenic_types = [
+            "tourist_attraction",
+            "park",
+            "natural_feature",
+            "museum",
+            "art_gallery",
+            "point_of_interest",
+            "amusement_park",
+            "zoo",
+            "stadium",
+        ]
+
+        best_candidate: dict[str, Any] | None = None
+        for query in scenic_queries:
+            places = self.search_places(
+                location=destination,
+                query=query,
+                radius=25000,
+                min_rating=4.0,
+                require_photo=True,
+                allowed_types=scenic_types,
+                max_pages=1,
+            )
+            candidate = self._select_best_cover_candidate(places)
+            if candidate:
+                best_candidate = candidate
+                break
+
+        if not best_candidate:
+            fallback_results = self.search_places(
+                location=destination,
+                query=destination,
+                radius=20000,
+                min_rating=4.0,
+                require_photo=True,
+                max_pages=1,
+            )
+            best_candidate = self._select_best_cover_candidate(fallback_results)
+
+        if not best_candidate or not best_candidate.get("photo_reference"):
+            return None
+
+        return self.get_proxy_photo_url(
+            best_candidate["photo_reference"], base_url=base_url
+        )
+
+    def _select_best_cover_candidate(
+        self, candidates: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        best = None
+        best_score = float("-inf")
+        for place in candidates:
+            score = self._cover_candidate_score(place)
+            if score > best_score:
+                best_score = score
+                best = place
+        return best
+
+    def _cover_candidate_score(self, place: dict[str, Any]) -> float:
+        if not place.get("photo_reference"):
+            return -float("inf")
+
+        rating = place.get("rating") or 0.0
+        reviews = place.get("user_ratings_total") or 0
+        types = place.get("types", [])
+
+        type_weights = {
+            "tourist_attraction": 1.6,
+            "natural_feature": 1.5,
+            "park": 1.4,
+            "museum": 1.3,
+            "art_gallery": 1.2,
+            "stadium": 1.1,
+            "point_of_interest": 1.05,
+        }
+
+        type_score = 1.0
+        if types:
+            type_score = max(type_weights.get(t, 1.0) for t in types)
+
+        return type_score * 10 + rating * 2 + min(reviews, 10000) / 500
+
     def autocomplete_places(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         """Return lightweight autocomplete suggestions for destinations.
 
@@ -337,7 +499,6 @@ class PlacesService:
         Handles country searches by showing cities within that country.
         """
         try:
-            # Common country names and their ISO codes
             country_map = {
                 "spain": "ES",
                 "france": "FR",
@@ -380,134 +541,181 @@ class PlacesService:
                 "israel": "IL",
                 "uae": "AE",
                 "united arab emirates": "AE",
-                "dubai": "AE",  # Special case - Dubai is often searched as country
+                "dubai": "AE",
             }
-            
-            # Normalize query for country detection
+
             query_lower = query.lower().strip()
             country_code = None
-            
-            # Check if query matches a country
-            if query_lower in country_map:
-                country_code = country_map[query_lower]
-            else:
-                # Check if query starts with a country name
-                for country_name, code in country_map.items():
-                    if query_lower.startswith(country_name + " "):
-                        country_code = code
-                        break
-            
+            for name, code in country_map.items():
+                if query_lower == name or query_lower.startswith(name + " "):
+                    country_code = code
+                    break
+
             url = f"{PLACES_API_BASE}/autocomplete/json"
             params = {
                 "input": query,
-                "types": "(cities)",
                 "key": self.api_key,
             }
-            
-            # Add country component filter if we detected a country
             if country_code:
                 params["components"] = f"country:{country_code}"
-            
+
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
-            
             if data.get("status") != "OK":
                 return []
-            
+
             preds = data.get("predictions", [])
-            
-            # Filter and score predictions based on place types (common approach without hardcoding)
-            # Strategy: Filter out administrative divisions and prefer actual cities using Google's type system
-            def score_prediction(prediction: dict[str, Any], query: str) -> tuple[float, dict[str, Any]]:
-                """Score a prediction based on place types and relevance."""
-                types = prediction.get("types", [])
-                description = prediction.get("description", "").lower()
-                query_lower = query.lower().strip()
-                
-                # Extract city name (first part before comma)
-                city_name = description.split(",")[0].strip().lower()
-                
-                # Score starts at 0
-                score = 0.0
-                
-                # STRONG PREFERENCE: "locality" type = actual cities (Google's official city type)
+            destination_keywords = {
+                "island",
+                "coast",
+                "region",
+                "valley",
+                "mountain",
+                "mountains",
+                "bay",
+                "peninsula",
+                "archipelago",
+                "riviera",
+                "highlands",
+                "plateau",
+                "desert",
+            }
+            low_level_markers = {
+                "county",
+                "district",
+                "parish",
+                "township",
+                "census",
+                "borough",
+            }
+            query_tokens = {
+                token for token in query_lower.replace(",", " ").split() if token
+            }
+            query_has_keyword = any(
+                token in destination_keywords for token in query_tokens
+            )
+
+            def classify(types: list[str]) -> str:
                 if "locality" in types:
-                    score += 15.0  # Strong boost for actual cities
-                elif "administrative_area_level_1" in types:
-                    score += 2.0  # States/provinces are acceptable but less preferred
-                else:
-                    score -= 5.0  # Unknown types are less preferred
-                    
-                # HEAVY FILTER: Administrative divisions (counties, districts)
-                # These are not cities and should be filtered out
-                if "administrative_area_level_2" in types or "administrative_area_level_3" in types:
-                    score -= 50.0  # Very heavy penalty to filter these out
-                
-                # Prefer exact city name matches
-                if query_lower == city_name:
-                    score += 10.0
-                elif query_lower in description:
+                    return "city"
+                if "country" in types:
+                    return "country"
+                if "administrative_area_level_1" in types:
+                    return "region"
+                if "administrative_area_level_2" in types:
+                    return "subregion"
+                return "other"
+
+            def contains_destination_term(text: str) -> bool:
+                lower = text.lower()
+                return any(keyword in lower for keyword in destination_keywords)
+
+            filtered_candidates: list[dict[str, Any]] = []
+            for prediction in preds:
+                types = prediction.get("types", [])
+                description = (prediction.get("description") or "").strip()
+                structured = prediction.get("structured_formatting") or {}
+                main_text = (structured.get("main_text") or "").strip()
+                main_lower = main_text.lower()
+                desc_lower = description.lower()
+                classification = classify(types)
+                contains_keyword = contains_destination_term(
+                    description + " " + main_text
+                )
+                has_low_level_marker = any(
+                    marker in desc_lower for marker in low_level_markers
+                )
+
+                if classification == "other":
+                    continue
+
+                allow = False
+                if classification in ("city", "country"):
+                    allow = True
+                elif classification == "region":
+                    allow = (
+                        query_has_keyword
+                        or query_lower == main_lower
+                        or (query_lower and query_lower in desc_lower)
+                        or contains_keyword
+                    ) and not has_low_level_marker
+                elif classification == "subregion":
+                    allow = (
+                        query_has_keyword
+                        or contains_keyword
+                        or query_lower == main_lower
+                    ) and not has_low_level_marker
+
+                if not allow:
+                    continue
+
+                filtered_candidates.append(
+                    {
+                        "prediction": prediction,
+                        "classification": classification,
+                        "main_lower": main_lower,
+                        "contains_keyword": contains_keyword,
+                    }
+                )
+
+            if not filtered_candidates:
+                return []
+
+            base_weights = {
+                "city": 18.0,
+                "country": 15.0,
+                "region": 11.0,
+                "subregion": 8.0,
+            }
+
+            def score_candidate(candidate: dict[str, Any]) -> float:
+                prediction = candidate["prediction"]
+                classification = candidate["classification"]
+                contains_keyword = candidate["contains_keyword"]
+                main_lower = candidate["main_lower"]
+                description = (prediction.get("description") or "").lower()
+                score = base_weights.get(classification, 0.0)
+
+                if query_lower == main_lower:
+                    score += 12.0
+                elif main_lower.startswith(query_lower):
+                    score += 6.0
+                elif query_lower and query_lower in description:
+                    score += 4.0
+
+                if query_has_keyword and classification in {"region", "subregion"}:
                     score += 5.0
-                
-                # Prefer shorter city names (often indicates major cities)
-                if len(city_name) < 20:
-                    score += 2.0
-                
-                # Heavily penalize very long city names (often administrative divisions)
-                if len(city_name) > 40:
-                    score -= 15.0
-                
-                # Minor penalty for unusual patterns
-                if "city" in description and query_lower not in city_name:
-                    score -= 2.0
-                
-                return (score, prediction)
-            
-            # Pre-filter: Remove results with undesirable types before scoring
-            # This is more efficient than scoring everything
-            filtered_before_scoring = []
-            for p in preds:
-                types = p.get("types", [])
-                description = p.get("description", "")
-                city_name = description.split(",")[0].strip() if description else ""
-                
-                # Skip administrative divisions entirely (counties, districts)
-                if "administrative_area_level_2" in types or "administrative_area_level_3" in types:
-                    continue
-                
-                # Skip very long city names (often administrative divisions)
-                if len(city_name) > 50:
-                    continue
-                
-                filtered_before_scoring.append(p)
-            
-            # Score and sort predictions
-            scored_preds = [score_prediction(p, query) for p in filtered_before_scoring]
-            scored_preds.sort(key=lambda x: x[0], reverse=True)
-            
-            # Take top results (Google's ranking + our type filtering)
-            filtered_preds = [p for score, p in scored_preds if score >= -10.0][:limit * 2]
-            
-            # Remove duplicates and obscure results
-            seen_cities = set()
+
+                if contains_keyword:
+                    score += 3.0
+
+                if len(main_lower) > 25:
+                    score -= 4.0
+
+                return score
+
+            scored_preds = [
+                (score_candidate(candidate), candidate["prediction"])
+                for candidate in filtered_candidates
+            ]
+            scored_preds.sort(key=lambda item: item[0], reverse=True)
+
+            filtered_preds = [p for score, p in scored_preds if score >= -5.0][
+                : limit * 2
+            ]
+
+            seen_names = set()
             final_preds = []
-            for p in filtered_preds:
-                description = p.get("description", "")
-                # Extract city name (first part before comma)
+            for prediction in filtered_preds:
+                description = prediction.get("description", "")
                 city_name = description.split(",")[0].strip().lower()
-                
-                # Skip if we've seen this city name already
-                if city_name in seen_cities:
+                if not city_name or city_name in seen_names:
                     continue
-                
-                # Skip very long city names (often administrative divisions)
-                if len(city_name) > 50:
+                if len(city_name) > 60:
                     continue
-                
-                seen_cities.add(city_name)
-                final_preds.append(p)
-                
+                seen_names.add(city_name)
+                final_preds.append(prediction)
                 if len(final_preds) >= limit:
                     break
 
@@ -579,6 +787,12 @@ class PlacesService:
         allowed_types: list[str] | None = None,
         extracted_queries: list[str] | None = None,
         extracted_place_types: list[str] | None = None,
+        pace_style: int = 50,  # Added for compatibility (not used in legacy)
+        rank_preference: (
+            str | None
+        ) = None,  # Added for compatibility (not used in legacy)
+        max_pages: int | None = None,  # Added for compatibility
+        place_id: str | None = None,  # Google Place ID (more reliable than geocoding)
     ) -> list[dict[str, Any]]:
         """
         Search for places based on user preferences.
@@ -707,6 +921,9 @@ class PlacesService:
             )
 
         # Search all queries and deduplicate
+        # Use max_pages if provided, otherwise default to 1
+        search_max_pages = max_pages if max_pages is not None else 1
+
         for query in all_queries:
             places = self.search_places(
                 location=destination,
@@ -715,6 +932,8 @@ class PlacesService:
                 min_rating=min_rating,
                 require_photo=require_photo,
                 allowed_types=allowed_types,
+                max_pages=search_max_pages,
+                place_id=place_id,  # Pass place_id for reliable location
             )
 
             # Add unique places

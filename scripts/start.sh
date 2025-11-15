@@ -16,6 +16,8 @@ if [[ "${RELOAD}" == "true" ]]; then
 fi
 
 CMD+=(--host "${HOST}" --port "${PORT}")
+CMD+=(--timeout-keep-alive 600)  # 10 minutes keep-alive timeout
+CMD+=(--timeout-graceful-shutdown 30)  # 30 seconds graceful shutdown
 
 exec "${CMD[@]}"
 

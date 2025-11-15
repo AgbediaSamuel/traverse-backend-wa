@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 
 from app.core.clerk_security import get_current_user_from_clerk
+from app.core.cover_image_service import cover_image_service
 from app.core.repository import repo
 from app.core.schemas import (
     CalendarResponseSubmit,
@@ -30,8 +31,6 @@ async def create_trip_invite(
     request: Request = None,
 ):
     """Create a new trip invite."""
-    from app.core.places_service import places_service
-
     clerk_user_id = current_user.clerk_user_id
 
     # Get user info from database
@@ -42,28 +41,14 @@ async def create_trip_invite(
     organizer_email = user.email
     organizer_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
 
-    # Fetch cover image if destination is provided
+    # Fetch cover image if destination is provided (using Unsplash with caching)
     cover_image_url = None
     if invite_data.destination:
         try:
-            # Use empty string to get relative paths that work through nginx proxy
-            base_url = ""
-            cover_qs = [
-                f"{invite_data.destination} skyline",
-                f"{invite_data.destination} cityscape",
-                f"{invite_data.destination} landmark",
-            ]
-            for q in cover_qs:
-                res = places_service.search_places(
-                    location=invite_data.destination, query=q
+            if cover_image_service:
+                cover_image_url = cover_image_service.get_cover_image(
+                    invite_data.destination, repo
                 )
-                if res and res[0].get("photo_reference"):
-                    url = places_service.get_proxy_photo_url(
-                        res[0]["photo_reference"], base_url
-                    )
-                    if url:
-                        cover_image_url = str(url)
-                        break
         except Exception as e:
             logger.debug(f"Failed to fetch cover image for invite: {e}")
             # Non-fatal: continue without cover image
@@ -108,6 +93,24 @@ async def get_received_invites(
 
     invites = repo.get_received_invites(user.email)
     return [TripInviteResponse(**invite) for invite in invites]
+
+
+@router.get("/invites/{invite_id}/public", response_model=TripInviteResponse)
+async def get_trip_invite_public(
+    invite_id: str = Path(
+        ...,
+        min_length=1,
+        max_length=50,
+        pattern="^[a-zA-Z0-9_-]+$",
+        description="Invite ID",
+    ),
+):
+    """Get a trip invite by ID (public endpoint, no auth required)."""
+    invite = repo.get_trip_invite(invite_id)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Trip invite not found")
+
+    return TripInviteResponse(**invite)
 
 
 @router.get("/invites/{invite_id}", response_model=TripInviteResponse)
@@ -475,6 +478,56 @@ async def respond_to_invite(
             no_common_dates=analysis_results.get("no_common_dates", False),
             common_dates_percentage=analysis_results.get("common_dates_percentage"),
         )
+
+        # Check if all participants have responded
+        # Filter out organizer and check if all non-organizer participants have responded
+        non_organizer_participants = [
+            p for p in participants if not p.get("is_organizer", False)
+        ]
+        all_responded = len(non_organizer_participants) > 0 and all(
+            p.get("status") == "responded" for p in non_organizer_participants
+        )
+
+        if all_responded:
+            # Send email to organizer
+            try:
+                organizer_clerk_id = updated_invite.get("organizer_clerk_id")
+                organizer = await repo.get_user_by_clerk_id(organizer_clerk_id)
+                if organizer:
+                    import os
+
+                    from app.core.email_service import email_service
+
+                    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
+                    generate_link = f"{frontend_url}/invites?highlight={invite_id}"
+
+                    # Extract first name
+                    organizer_first_name = (
+                        organizer.first_name
+                        or organizer.email.split("@")[0].split(".")[0].title()
+                    )
+
+                    # Count group size (all participants including organizer)
+                    group_size = len(participants)
+
+                    email_service.send_all_participants_responded_email(
+                        organizer_email=organizer.email,
+                        organizer_first_name=organizer_first_name,
+                        destination=updated_invite.get(
+                            "destination", "your destination"
+                        ),
+                        trip_name=updated_invite.get("trip_name", "Group Trip"),
+                        group_size=group_size,
+                        generate_link=generate_link,
+                    )
+                    logger.info(
+                        f"[Email] Sent all participants responded email to organizer {organizer.email}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[Email] Error sending all participants responded email: {e}"
+                )
+                # Non-fatal: continue even if email fails
 
     return {
         "message": "Response submitted successfully",

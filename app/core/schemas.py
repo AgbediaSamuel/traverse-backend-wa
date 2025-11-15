@@ -54,7 +54,9 @@ class ItineraryDocument(BaseModel):
     destination: str
     dates: str
     duration: str
-    cover_image: str | None = Field(None, description="Cover image URL (absolute or relative)")
+    cover_image: str | None = Field(
+        None, description="Cover image URL (absolute or relative)"
+    )
     days: list[Day] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     # Optional group trip metadata
@@ -178,6 +180,7 @@ class User(UserBase):
     scopes: list[str] = Field(default_factory=lambda: ["user"])  # For role-based access
     onboarding_completed: bool = False
     onboarding_skipped: bool = False
+    first_itinerary_email_sent: bool = False  # Track if first itinerary email was sent
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -402,6 +405,10 @@ class ItineraryGenerateRequest(BaseModel):
     trip_name: str = Field(..., min_length=1, max_length=50)
     traveler_name: str = Field(..., min_length=1, max_length=100)
     destination: str = Field(..., min_length=1, max_length=200)
+    destination_place_id: str | None = Field(
+        None,
+        description="Google Place ID from autocomplete (more reliable than geocoding)",
+    )
     dates: str = Field(
         ...,
         description="Date range in format 'YYYY-MM-DD - YYYY-MM-DD'",
