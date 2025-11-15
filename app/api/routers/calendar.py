@@ -2,7 +2,10 @@ import logging
 from datetime import datetime
 
 from app.core.clerk_security import get_current_user_from_clerk
+<<<<<<< HEAD
 from app.core.cover_image_service import cover_image_service
+=======
+>>>>>>> master
 from app.core.repository import repo
 from app.core.schemas import (
     CalendarResponseSubmit,
@@ -31,6 +34,11 @@ async def create_trip_invite(
     request: Request = None,
 ):
     """Create a new trip invite."""
+<<<<<<< HEAD
+=======
+    from app.core.places_service import places_service
+
+>>>>>>> master
     clerk_user_id = current_user.clerk_user_id
 
     # Get user info from database
@@ -41,6 +49,7 @@ async def create_trip_invite(
     organizer_email = user.email
     organizer_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
 
+<<<<<<< HEAD
     # Fetch cover image if destination is provided (using Unsplash with caching)
     cover_image_url = None
     if invite_data.destination:
@@ -49,6 +58,30 @@ async def create_trip_invite(
                 cover_image_url = cover_image_service.get_cover_image(
                     invite_data.destination, repo
                 )
+=======
+    # Fetch cover image if destination is provided
+    cover_image_url = None
+    if invite_data.destination:
+        try:
+            # Use empty string to get relative paths that work through nginx proxy
+            base_url = ""
+            cover_qs = [
+                f"{invite_data.destination} skyline",
+                f"{invite_data.destination} cityscape",
+                f"{invite_data.destination} landmark",
+            ]
+            for q in cover_qs:
+                res = places_service.search_places(
+                    location=invite_data.destination, query=q
+                )
+                if res and res[0].get("photo_reference"):
+                    url = places_service.get_proxy_photo_url(
+                        res[0]["photo_reference"], base_url
+                    )
+                    if url:
+                        cover_image_url = str(url)
+                        break
+>>>>>>> master
         except Exception as e:
             logger.debug(f"Failed to fetch cover image for invite: {e}")
             # Non-fatal: continue without cover image

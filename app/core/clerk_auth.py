@@ -248,10 +248,21 @@ class ClerkAuth:
             Standardized user data dictionary
         """
         first_name = (
+<<<<<<< HEAD
             clerk_payload.get("given_name") or clerk_payload.get("first_name") or ""
         )
         last_name = (
             clerk_payload.get("family_name") or clerk_payload.get("last_name") or ""
+=======
+            clerk_payload.get("given_name")
+            or clerk_payload.get("first_name")
+            or ""
+        )
+        last_name = (
+            clerk_payload.get("family_name")
+            or clerk_payload.get("last_name")
+            or ""
+>>>>>>> master
         )
 
         if (not first_name or not last_name) and clerk_payload.get("name"):
@@ -263,7 +274,14 @@ class ClerkAuth:
 
         first_name = first_name.strip()
         last_name = last_name.strip()
+<<<<<<< HEAD
         full_name = clerk_payload.get("name") or f"{first_name} {last_name}".strip()
+=======
+        full_name = (
+            clerk_payload.get("name")
+            or f"{first_name} {last_name}".strip()
+        )
+>>>>>>> master
 
         # Extract common fields from Clerk token
         return {
