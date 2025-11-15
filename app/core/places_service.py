@@ -378,20 +378,12 @@ class PlacesService:
         """
         if not photo_reference:
             return None
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> master
         # Always use relative path /api/places/photo when behind nginx proxy
         # This works correctly when proxied through ngrok
         if not base_url:
             return f"/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
-<<<<<<< HEAD
 
-=======
-        
->>>>>>> master
         # If base_url is provided, ensure it includes /api prefix
         base = base_url.rstrip("/")
         # Check if base_url already includes /api, if not add it
@@ -461,47 +453,20 @@ class PlacesService:
                     country_code = code
                     break
 
-=======
-            
-            # Normalize query for country detection
-            query_lower = query.lower().strip()
-            country_code = None
-            
-            # Check if query matches a country
-            if query_lower in country_map:
-                country_code = country_map[query_lower]
-            else:
-                # Check if query starts with a country name
-                for country_name, code in country_map.items():
-                    if query_lower.startswith(country_name + " "):
-                        country_code = code
-                        break
-            
->>>>>>> master
             url = f"{PLACES_API_BASE}/autocomplete/json"
             params = {
                 "input": query,
                 "key": self.api_key,
             }
-<<<<<<< HEAD
             if country_code:
                 params["components"] = f"country:{country_code}"
 
-=======
-            
-            # Add country component filter if we detected a country
-            if country_code:
-                params["components"] = f"country:{country_code}"
-            
->>>>>>> master
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             
             if data.get("status") != "OK":
                 return []
-<<<<<<< HEAD
-<<<<<<< HEAD
 
             preds = data.get("predictions", [])
             destination_keywords = {
@@ -654,102 +619,6 @@ class PlacesService:
                     continue
                 seen_names.add(city_name)
                 final_preds.append(prediction)
-=======
-            
-            preds = data.get("predictions", [])
-            
-            # Filter and score predictions based on place types (common approach without hardcoding)
-            # Strategy: Filter out administrative divisions and prefer actual cities using Google's type system
-            def score_prediction(prediction: dict[str, Any], query: str) -> tuple[float, dict[str, Any]]:
-                """Score a prediction based on place types and relevance."""
-                types = prediction.get("types", [])
-                description = prediction.get("description", "").lower()
-                query_lower = query.lower().strip()
-                
-                # Extract city name (first part before comma)
-                city_name = description.split(",")[0].strip().lower()
-                
-                # Score starts at 0
-                score = 0.0
-                
-                # STRONG PREFERENCE: "locality" type = actual cities (Google's official city type)
-                if "locality" in types:
-                    score += 15.0  # Strong boost for actual cities
-                elif "administrative_area_level_1" in types:
-                    score += 2.0  # States/provinces are acceptable but less preferred
-                else:
-                    score -= 5.0  # Unknown types are less preferred
-                    
-                # HEAVY FILTER: Administrative divisions (counties, districts)
-                # These are not cities and should be filtered out
-                if "administrative_area_level_2" in types or "administrative_area_level_3" in types:
-                    score -= 50.0  # Very heavy penalty to filter these out
-                
-                # Prefer exact city name matches
-                if query_lower == city_name:
-                    score += 10.0
-                elif query_lower in description:
-                    score += 5.0
-                
-                # Prefer shorter city names (often indicates major cities)
-                if len(city_name) < 20:
-                    score += 2.0
-                
-                # Heavily penalize very long city names (often administrative divisions)
-                if len(city_name) > 40:
-                    score -= 15.0
-                
-                # Minor penalty for unusual patterns
-                if "city" in description and query_lower not in city_name:
-                    score -= 2.0
-                
-                return (score, prediction)
-            
-            # Pre-filter: Remove results with undesirable types before scoring
-            # This is more efficient than scoring everything
-            filtered_before_scoring = []
-            for p in preds:
-                types = p.get("types", [])
-                description = p.get("description", "")
-                city_name = description.split(",")[0].strip() if description else ""
-                
-                # Skip administrative divisions entirely (counties, districts)
-                if "administrative_area_level_2" in types or "administrative_area_level_3" in types:
-                    continue
-                
-                # Skip very long city names (often administrative divisions)
-                if len(city_name) > 50:
-                    continue
-                
-                filtered_before_scoring.append(p)
-            
-            # Score and sort predictions
-            scored_preds = [score_prediction(p, query) for p in filtered_before_scoring]
-            scored_preds.sort(key=lambda x: x[0], reverse=True)
-            
-            # Take top results (Google's ranking + our type filtering)
-            filtered_preds = [p for score, p in scored_preds if score >= -10.0][:limit * 2]
-            
-            # Remove duplicates and obscure results
-            seen_cities = set()
-            final_preds = []
-            for p in filtered_preds:
-                description = p.get("description", "")
-                # Extract city name (first part before comma)
-                city_name = description.split(",")[0].strip().lower()
-                
-                # Skip if we've seen this city name already
-                if city_name in seen_cities:
-                    continue
-                
-                # Skip very long city names (often administrative divisions)
-                if len(city_name) > 50:
-                    continue
-                
-                seen_cities.add(city_name)
-                final_preds.append(p)
-                
->>>>>>> master
                 if len(final_preds) >= limit:
                     break
 

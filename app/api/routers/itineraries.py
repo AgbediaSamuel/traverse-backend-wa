@@ -5,11 +5,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.clerk_security import get_current_user_from_clerk
-<<<<<<< HEAD
 from app.core.cover_image_service import cover_image_service
 from app.core.destination_profiling_service import destination_profiling_service
-=======
->>>>>>> master
 from app.core.places_service import places_service
 from app.core.repository import repo
 from app.core.schemas import (
@@ -21,10 +18,7 @@ from app.core.schemas import (
     UpdateParticipantsRequest,
     User,
 )
-<<<<<<< HEAD
 from app.core.semantic_category_service import semantic_category_service
-=======
->>>>>>> master
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 
 logger = logging.getLogger(__name__)
@@ -489,12 +483,9 @@ def generate_itinerary_v2(
     trip_name = payload.trip_name
     traveler_name = payload.traveler_name
     destination = payload.destination
-<<<<<<< HEAD
     destination_place_id = (
         payload.destination_place_id
     )  # Google Place ID from autocomplete
-=======
->>>>>>> master
     dates = payload.dates
     duration = payload.duration or ""
     clerk_user_id = payload.clerk_user_id
@@ -1294,48 +1285,6 @@ def generate_itinerary_v2(
                     place_id=v.get("place_id"),
                 )
             )
-<<<<<<< HEAD
-=======
-
-        # Per-day backfill if short
-        if len(activities) < plan["min_activities"]:
-            shortfall = plan["min_activities"] - len(activities)
-            print(f"[Day {i+1}] Backfilling {shortfall} activities")
-
-            for _ in range(shortfall):
-                if remaining_unassigned:
-                    item = remaining_unassigned.pop(0)
-                    v = item["venue"]
-                    seen_ids.add(v["place_id"])
-
-                    slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][
-                        len(activities) % 5
-                    ]
-                    img = None
-                    if v.get("photo_reference"):
-                        url = (
-                            places_service.get_proxy_photo_url(
-                                v["photo_reference"], base_url
-                            )
-                            or None
-                        )
-                        img = url  # Use string directly (can be relative or absolute)
-
-                    activities.append(
-                        Activity(
-                            time=slot,
-                            title=v.get("name") or "Activity",
-                            location=v.get("address") or destination,
-                            description="",
-                            image=img,
-                            place_id=v.get("place_id"),
-                        )
-                    )
->>>>>>> master
-                else:
-                    # No more venues - this shouldn't happen given our checks, but log it
-                    print(f"[Day {i+1}] WARNING: Ran out of venues for backfill")
-                    break
         days.append(
             Day(
                 date=d.strftime("%A, %B %d"),
@@ -1851,24 +1800,6 @@ def generate_itinerary_v2(
     except Exception as e:
         print(f"[CoverImage] Failed to get cover image: {e}")
         # Non-fatal: continue without cover image
-=======
-        cover_qs = [
-            f"{destination} skyline",
-            f"{destination} cityscape",
-            f"{destination} landmark",
-        ]
-        for q in cover_qs:
-            res = places_service.search_places(location=destination, query=q)
-            if res and res[0].get("photo_reference"):
-                url = places_service.get_proxy_photo_url(
-                    res[0]["photo_reference"], base_url
-                )
-                if url:
-                    doc.cover_image = url  # Use string directly (can be relative or absolute)
-                    break
-    except Exception:
-        pass
->>>>>>> master
 
     itn_id = repo.save_itinerary(doc, clerk_user_id=clerk_user_id)
 

@@ -186,13 +186,9 @@ class MongoDBRepo:
             for invite in invites_with_itineraries:
                 itinerary_id = invite.get("itinerary_id")
                 if itinerary_id and itinerary_id not in seen_ids:
-<<<<<<< HEAD
                     itinerary = self.itineraries_collection.find_one(
                         {"id": itinerary_id}
                     )
-=======
-                    itinerary = self.itineraries_collection.find_one({"id": itinerary_id})
->>>>>>> master
                     if itinerary:
                         itinerary.pop("_id", None)
                         itineraries.append(itinerary)
@@ -234,13 +230,9 @@ class MongoDBRepo:
             }
         )
 
-<<<<<<< HEAD
         sanitized_first = (
             clerk_data.first_name.strip() if clerk_data.first_name else None
         )
-=======
-        sanitized_first = clerk_data.first_name.strip() if clerk_data.first_name else None
->>>>>>> master
         sanitized_last = clerk_data.last_name.strip() if clerk_data.last_name else None
         sanitized_full = (
             clerk_data.full_name.strip()
@@ -248,13 +240,7 @@ class MongoDBRepo:
             else " ".join(part for part in [sanitized_first, sanitized_last] if part)
             or None
         )
-<<<<<<< HEAD
         sanitized_image = clerk_data.image_url.strip() if clerk_data.image_url else None
-=======
-        sanitized_image = (
-            clerk_data.image_url.strip() if clerk_data.image_url else None
-        )
->>>>>>> master
 
         if existing_user:
             updates: dict[str, Any] = {}

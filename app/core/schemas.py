@@ -54,13 +54,9 @@ class ItineraryDocument(BaseModel):
     destination: str
     dates: str
     duration: str
-<<<<<<< HEAD
     cover_image: str | None = Field(
         None, description="Cover image URL (absolute or relative)"
     )
-=======
-    cover_image: str | None = Field(None, description="Cover image URL (absolute or relative)")
->>>>>>> master
     days: list[Day] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     # Optional group trip metadata
@@ -409,13 +405,10 @@ class ItineraryGenerateRequest(BaseModel):
     trip_name: str = Field(..., min_length=1, max_length=50)
     traveler_name: str = Field(..., min_length=1, max_length=100)
     destination: str = Field(..., min_length=1, max_length=200)
-<<<<<<< HEAD
     destination_place_id: str | None = Field(
         None,
         description="Google Place ID from autocomplete (more reliable than geocoding)",
     )
-=======
->>>>>>> master
     dates: str = Field(
         ...,
         description="Date range in format 'YYYY-MM-DD - YYYY-MM-DD'",
