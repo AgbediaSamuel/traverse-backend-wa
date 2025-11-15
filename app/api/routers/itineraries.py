@@ -1285,7 +1285,10 @@ def generate_itinerary_v2(
                     place_id=v.get("place_id"),
                 )
             )
-
+                else:
+                    # No more venues - this shouldn't happen given our checks, but log it
+                    print(f"[Day {i+1}] WARNING: Ran out of venues for backfill")
+                    break
         days.append(
             Day(
                 date=d.strftime("%A, %B %d"),

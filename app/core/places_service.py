@@ -392,106 +392,6 @@ class PlacesService:
         else:
             return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
 
-    def get_destination_cover_photo(
-        self,
-        destination: str,
-        *,
-        base_url: str = "",
-        queries: list[str] | None = None,
-    ) -> str | None:
-        """
-        Fetch a high-quality cover photo for a destination using scenic queries.
-        """
-        scenic_queries = queries or [
-            f"{destination} skyline",
-            f"{destination} cityscape",
-            f"{destination} landmark",
-            f"{destination} aerial view",
-            f"best attractions in {destination}",
-        ]
-
-        scenic_types = [
-            "tourist_attraction",
-            "park",
-            "natural_feature",
-            "museum",
-            "art_gallery",
-            "point_of_interest",
-            "amusement_park",
-            "zoo",
-            "stadium",
-        ]
-
-        best_candidate: dict[str, Any] | None = None
-        for query in scenic_queries:
-            places = self.search_places(
-                location=destination,
-                query=query,
-                radius=25000,
-                min_rating=4.0,
-                require_photo=True,
-                allowed_types=scenic_types,
-                max_pages=1,
-            )
-            candidate = self._select_best_cover_candidate(places)
-            if candidate:
-                best_candidate = candidate
-                break
-
-        if not best_candidate:
-            fallback_results = self.search_places(
-                location=destination,
-                query=destination,
-                radius=20000,
-                min_rating=4.0,
-                require_photo=True,
-                max_pages=1,
-            )
-            best_candidate = self._select_best_cover_candidate(fallback_results)
-
-        if not best_candidate or not best_candidate.get("photo_reference"):
-            return None
-
-        return self.get_proxy_photo_url(
-            best_candidate["photo_reference"], base_url=base_url
-        )
-
-    def _select_best_cover_candidate(
-        self, candidates: list[dict[str, Any]]
-    ) -> dict[str, Any] | None:
-        best = None
-        best_score = float("-inf")
-        for place in candidates:
-            score = self._cover_candidate_score(place)
-            if score > best_score:
-                best_score = score
-                best = place
-        return best
-
-    def _cover_candidate_score(self, place: dict[str, Any]) -> float:
-        if not place.get("photo_reference"):
-            return -float("inf")
-
-        rating = place.get("rating") or 0.0
-        reviews = place.get("user_ratings_total") or 0
-        types = place.get("types", [])
-
-        type_weights = {
-            "tourist_attraction": 1.6,
-            "natural_feature": 1.5,
-            "park": 1.4,
-            "museum": 1.3,
-            "art_gallery": 1.2,
-            "stadium": 1.1,
-            "point_of_interest": 1.05,
-        }
-
-        type_score = 1.0
-        if types:
-            type_score = max(type_weights.get(t, 1.0) for t in types)
-
-        return type_score * 10 + rating * 2 + min(reviews, 10000) / 500
-
     def autocomplete_places(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         """Return lightweight autocomplete suggestions for destinations.
 
@@ -499,6 +399,7 @@ class PlacesService:
         Handles country searches by showing cities within that country.
         """
         try:
+            # Common country names and their ISO codes
             country_map = {
                 "spain": "ES",
                 "france": "FR",
@@ -541,7 +442,7 @@ class PlacesService:
                 "israel": "IL",
                 "uae": "AE",
                 "united arab emirates": "AE",
-                "dubai": "AE",
+                "dubai": "AE",  # Special case - Dubai is often searched as country
             }
 
             query_lower = query.lower().strip()
@@ -562,8 +463,10 @@ class PlacesService:
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
+            
             if data.get("status") != "OK":
                 return []
+<<<<<<< HEAD
 
             preds = data.get("predictions", [])
             destination_keywords = {
