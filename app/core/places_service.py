@@ -445,6 +445,7 @@ class PlacesService:
                 "dubai": "AE",  # Special case - Dubai is often searched as country
             }
 <<<<<<< HEAD
+<<<<<<< HEAD
 
             query_lower = query.lower().strip()
             country_code = None

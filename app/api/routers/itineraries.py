@@ -1793,6 +1793,7 @@ def generate_itinerary_v2(
     # Add cover image using Unsplash (with caching)
     try:
 <<<<<<< HEAD
+<<<<<<< HEAD
         if cover_image_service:
             cover_image_url = cover_image_service.get_cover_image(destination, repo)
             if cover_image_url:
