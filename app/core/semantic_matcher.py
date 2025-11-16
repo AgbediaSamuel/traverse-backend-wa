@@ -120,9 +120,7 @@ class SemanticMatcher:
             print(f"[SemanticMatcher] Error in batch similarity: {e}")
             return np.zeros((embeddings1.shape[0], embeddings2.shape[0]))
 
-    def cosine_similarity_score(
-        self, embedding1: list[float], embedding2: list[float]
-    ) -> float:
+    def cosine_similarity_score(self, embedding1: list[float], embedding2: list[float]) -> float:
         """
         Calculate cosine similarity between two embeddings.
         Optimized for normalized embeddings.
@@ -175,9 +173,7 @@ class SemanticMatcher:
         if types:
             # Filter out generic types like "establishment", "point_of_interest"
             filtered_types = [
-                t
-                for t in types
-                if t not in ["establishment", "point_of_interest", "location"]
+                t for t in types if t not in ["establishment", "point_of_interest", "location"]
             ]
             if filtered_types:
                 parts.extend(filtered_types[:5])  # Limit to top 5 types
@@ -217,9 +213,7 @@ class SemanticMatcher:
         Returns:
             Similarity score between 0.0 and 1.0
         """
-        results = self.match_interests_batch(
-            [venue], selected_interests, extracted_keywords
-        )
+        results = self.match_interests_batch([venue], selected_interests, extracted_keywords)
         return results[0] if results else 0.0
 
     def match_interests_batch(
@@ -292,9 +286,7 @@ class SemanticMatcher:
 
             # Calculate all pairwise similarities in one operation
             # Shape: [num_venues, num_preferences]
-            similarities = self.cosine_similarity_batch(
-                venue_embeddings, preference_embeddings
-            )
+            similarities = self.cosine_similarity_batch(venue_embeddings, preference_embeddings)
 
             # Apply weighted aggregation
             scores = []

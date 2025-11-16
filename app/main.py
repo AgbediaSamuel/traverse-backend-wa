@@ -1,5 +1,9 @@
 import os
 
+from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.api.routers.auth import router as auth_router
 from app.api.routers.calendar import router as calendar_router
 from app.api.routers.itineraries import router as itineraries_router
@@ -8,9 +12,6 @@ from app.api.routers.webhooks import webhook_router
 from app.core.csrf_middleware import CSRFProtectionMiddleware
 from app.core.repository import repo
 from app.core.settings import get_settings
-from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 

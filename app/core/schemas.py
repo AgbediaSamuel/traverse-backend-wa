@@ -54,9 +54,7 @@ class ItineraryDocument(BaseModel):
     destination: str
     dates: str
     duration: str
-    cover_image: str | None = Field(
-        None, description="Cover image URL (absolute or relative)"
-    )
+    cover_image: str | None = Field(None, description="Cover image URL (absolute or relative)")
     days: list[Day] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     # Optional group trip metadata
@@ -68,8 +66,7 @@ class ItineraryDocument(BaseModel):
     city: str | None = Field(
         default=None,
         description=(
-            "City name extracted from destination "
-            "(e.g., 'Paris' from 'Paris, France')"
+            "City name extracted from destination " "(e.g., 'Paris' from 'Paris, France')"
         ),
     )
 
@@ -229,9 +226,7 @@ class InviteParticipantResponse(InviteParticipantBase):
         default="pending",
         pattern="^(pending|invited|responded|declined|preferences_completed)$",
     )
-    available_dates: list[str] | None = Field(
-        default_factory=list, description="ISO date strings"
-    )
+    available_dates: list[str] | None = Field(default_factory=list, description="ISO date strings")
     has_completed_preferences: bool = Field(
         default=False, description="Whether participant has completed their preferences"
     )
@@ -258,12 +253,8 @@ class TripInviteBase(BaseModel):
     )
 
     # Finalized dates (set by organizer)
-    finalized_start_date: str | None = Field(
-        None, description="Finalized start date for the trip"
-    )
-    finalized_end_date: str | None = Field(
-        None, description="Finalized end date for the trip"
-    )
+    finalized_start_date: str | None = Field(None, description="Finalized start date for the trip")
+    finalized_end_date: str | None = Field(None, description="Finalized end date for the trip")
     dates_finalized_by: str | None = Field(
         None, pattern="^(common|organizer)$", description="How dates were finalized"
     )
@@ -279,12 +270,8 @@ class TripInviteBase(BaseModel):
     collect_preferences: bool = Field(
         default=False, description="Whether to collect preferences from participants"
     )
-    trip_type: str = Field(
-        default="group", pattern="^(solo|group)$", description="Type of trip"
-    )
-    cover_image: str | None = Field(
-        None, description="Proxied cover image URL for the destination"
-    )
+    trip_type: str = Field(default="group", pattern="^(solo|group)$", description="Type of trip")
+    cover_image: str | None = Field(None, description="Proxied cover image URL for the destination")
     itinerary_id: str | None = Field(
         None, description="ID of the itinerary created from this invite"
     )
@@ -389,9 +376,7 @@ class ShareItineraryRequest(BaseModel):
     participants: list[EmailStr] = Field(
         ..., max_length=20, description="List of participant emails"
     )
-    message: str | None = Field(
-        None, max_length=500, description="Optional message to include"
-    )
+    message: str | None = Field(None, max_length=500, description="Optional message to include")
 
 
 # =============================================================================

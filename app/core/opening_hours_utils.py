@@ -54,12 +54,8 @@ def parse_opening_hours(weekday_text: list[str]) -> dict[str, dict[str, str | No
             close_match = matches[-1]
 
             # Convert to 24-hour format
-            open_24 = convert_to_24h(
-                int(open_match[0]), int(open_match[1]), open_match[2]
-            )
-            close_24 = convert_to_24h(
-                int(close_match[0]), int(close_match[1]), close_match[2]
-            )
+            open_24 = convert_to_24h(int(open_match[0]), int(open_match[1]), open_match[2])
+            close_24 = convert_to_24h(int(close_match[0]), int(close_match[1]), close_match[2])
 
             hours_map[day] = {"open": open_24, "close": close_24}
         else:
