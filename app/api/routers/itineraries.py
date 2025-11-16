@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.clerk_security import get_current_user_from_clerk
+from app.core.cover_image_service import cover_image_service
+from app.core.destination_profiling_service import destination_profiling_service
 from app.core.places_service import places_service
 from app.core.repository import repo
 from app.core.schemas import (
@@ -16,11 +18,338 @@ from app.core.schemas import (
     UpdateParticipantsRequest,
     User,
 )
+from app.core.semantic_category_service import semantic_category_service
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/itineraries", tags=["itineraries"])
+
+
+def _optimize_day_times(
+    day: Day,
+    chosen_venues: list[dict[str, Any]],
+    opening_hours_cache: dict[str, dict[str, dict[str, str | None]]],
+    pace_style: int,
+) -> None:
+    """
+    Optimize activity times: sort chronologically and adjust for travel.
+
+    Args:
+        day: Day object with activities
+        chosen_venues: List of venue dicts with place_id, opening_hours, etc.
+        opening_hours_cache: Cache of parsed opening hours by place_id
+        pace_style: User's pace preference (0-100)
+    """
+    if len(day.activities) < 2:
+        return  # Nothing to optimize
+
+    from app.core.opening_hours_utils import (
+        adjust_time_to_opening_hours,
+        get_default_hours_by_type,
+        is_venue_open_at_time,
+        parse_opening_hours,
+        parse_time_to_minutes,
+    )
+    from app.core.travel_time_utils import (
+        estimate_activity_duration,
+        estimate_travel_time,
+    )
+
+    # Helper to convert minutes back to time string
+    def minutes_to_time_string(minutes: int) -> str:
+        """Convert minutes since midnight to 12-hour format."""
+        hours = minutes // 60
+        mins = minutes % 60
+
+        if hours == 0:
+            return f"12:{mins:02d} AM"
+        elif hours < 12:
+            return f"{hours}:{mins:02d} AM"
+        elif hours == 12:
+            return f"12:{mins:02d} PM"
+        else:
+            return f"{hours - 12}:{mins:02d} PM"
+
+    # Helper to get venue data by place_id
+    def get_venue_data(place_id: str | None) -> dict[str, Any] | None:
+        if not place_id:
+            return None
+        for v in chosen_venues:
+            if v.get("place_id") == place_id:
+                return v
+        return None
+
+    # Step 1: Parse times and create list of (activity, parsed_time) tuples
+    activities_with_time = []
+    for act in day.activities:
+        try:
+            parsed_time = parse_time_to_minutes(act.time)
+            activities_with_time.append((act, parsed_time))
+        except Exception as e:
+            print(f"[TimeOptimize] Failed to parse time '{act.time}': {e}")
+            # Use noon as fallback
+            activities_with_time.append((act, 12 * 60))
+
+    # Step 2: Sort by parsed time (chronological order)
+    activities_with_time.sort(key=lambda x: x[1])
+    print(
+        f"[TimeOptimize] Sorted {len(activities_with_time)} activities "
+        f"chronologically"
+    )
+
+    # Step 3: Validate and adjust times based on travel constraints
+    day_name = day.date.split(",")[0].strip()  # Extract day name (e.g., "Monday")
+    BUFFER_MINUTES = 15  # Buffer between activities
+
+    optimized_activities = []
+    for idx, (act, parsed_time) in enumerate(activities_with_time):
+        if idx > 0:
+            # Check travel time constraint
+            prev_act, prev_time = optimized_activities[-1]
+
+            # Get venue data for duration and travel time
+            prev_venue_data = get_venue_data(prev_act.place_id)
+            prev_venue_types = (
+                prev_venue_data.get("types", []) if prev_venue_data else []
+            )
+
+            # Calculate required start time
+            prev_duration = estimate_activity_duration(prev_venue_types, pace_style)
+            travel_mins = 0
+            if prev_act.distance_to_next is not None:
+                travel_mins = estimate_travel_time(prev_act.distance_to_next)
+
+            required_start = prev_time + prev_duration + travel_mins + BUFFER_MINUTES
+
+            # Adjust if current activity starts too early
+            if parsed_time < required_start:
+                proposed_time = required_start
+                proposed_time_str = minutes_to_time_string(proposed_time)
+
+                # Check opening hours before applying adjustment
+                venue_data = get_venue_data(act.place_id)
+                adjusted_time_str = proposed_time_str
+
+                if venue_data:
+                    # Try to get parsed opening hours from cache
+                    parsed_hours = opening_hours_cache.get(act.place_id)
+
+                    if not parsed_hours:
+                        # Not in cache - parse and cache it
+                        weekday_text = venue_data.get("opening_hours", [])
+                        if weekday_text:
+                            parsed_hours = parse_opening_hours(weekday_text)
+                            opening_hours_cache[act.place_id] = parsed_hours
+
+                    if parsed_hours:
+                        # Check if proposed time is valid
+                        is_open, reason = is_venue_open_at_time(
+                            parsed_hours, day_name, proposed_time_str
+                        )
+
+                        if not is_open:
+                            # Adjust to opening hours
+                            adjusted_time_str = adjust_time_to_opening_hours(
+                                proposed_time_str, parsed_hours, day_name
+                            )
+                            print(
+                                f"[TimeOptimize] Adjusted '{act.title}' from "
+                                f"{proposed_time_str} to {adjusted_time_str}: {reason}"
+                            )
+                    else:
+                        # No opening hours - use type-based defaults
+                        venue_types = venue_data.get("types", [])
+                        if venue_types:
+                            default_hours = get_default_hours_by_type(venue_types)
+                            is_open, reason = is_venue_open_at_time(
+                                default_hours, day_name, proposed_time_str
+                            )
+
+                            if not is_open:
+                                adjusted_time_str = adjust_time_to_opening_hours(
+                                    proposed_time_str, default_hours, day_name
+                                )
+                                print(
+                                    f"[TimeOptimize] Adjusted '{act.title}' "
+                                    f"using defaults from {proposed_time_str} "
+                                    f"to {adjusted_time_str}: {reason}"
+                                )
+
+                    # Update parsed time from adjusted string
+                    parsed_time = parse_time_to_minutes(adjusted_time_str)
+
+                # Apply adjusted time
+                act.time = adjusted_time_str
+                print(
+                    f"[TimeOptimize] Adjusted '{act.title}' from "
+                    f"{minutes_to_time_string(required_start)} to "
+                    f"{adjusted_time_str} for travel constraint"
+                )
+
+        optimized_activities.append((act, parsed_time))
+
+    # Step 4: Re-sort after adjustments (in case adjustments changed order)
+    optimized_activities.sort(key=lambda x: x[1])
+
+    # Step 5: Update day.activities with optimized order
+    day.activities = [act for act, _ in optimized_activities]
+
+    print(
+        f"[TimeOptimize] Optimized {len(day.activities)} activities with "
+        f"chronological ordering and travel constraints"
+    )
+
+
+def _pass_b(
+    destination: str,
+    destination_place_id: str | None,
+    budget_style: int,
+    pace_style: int,
+    pass_b_max: int,
+    seen_ids: set[str],
+    selected_interests: list[str],
+    other_interests_texts: list[str],
+    vibe_notes: str | None,
+    payload_notes: str | None,
+    trip_type: str,
+) -> list[dict[str, Any]]:
+    """
+    Execute Pass B using semantic category matching.
+
+    Returns:
+        List of venue dictionaries
+    """
+    # Combine user preferences into a single text for embedding
+    preference_parts = []
+
+    if selected_interests:
+        preference_parts.append(f"Interests: {', '.join(selected_interests)}")
+
+    if other_interests_texts:
+        preference_parts.append(" ".join(other_interests_texts))
+
+    if vibe_notes:
+        preference_parts.append(vibe_notes)
+
+    if trip_type == "group" and payload_notes:
+        preference_parts.append(payload_notes)
+
+    # Add context from sliders
+    if budget_style > 66:
+        preference_parts.append("prefer luxury and high-end venues")
+    elif budget_style < 33:
+        preference_parts.append("prefer budget-friendly options")
+
+    if pace_style < 33:
+        preference_parts.append("prefer relaxed, slow-paced activities")
+    elif pace_style > 66:
+        preference_parts.append("prefer fast-paced, action-packed activities")
+
+    user_preference = ". ".join(preference_parts)
+
+    # Debug: Log preference text
+    print(f"[Pass B] Preference parts: {preference_parts}")
+    print(f"[Pass B] Combined preference text: '{user_preference}'")
+    print(f"[Pass B] Preference text length: {len(user_preference)}")
+
+    # Handle edge case: empty preference text
+    if not user_preference or not user_preference.strip():
+        print(
+            "[Pass B] WARNING: Empty preference text! "
+            "Using fallback default preferences."
+        )
+        user_preference = "tourist attractions, popular places, things to do"
+
+    # Get destination profile (available categories)
+    destination_profile = destination_profiling_service.get_destination_profile(
+        destination
+    )
+    print(
+        f"[Pass B] Destination profile has "
+        f"{len(destination_profile)} categories: "
+        f"{list(destination_profile)[:10]}"
+    )
+
+    # Find relevant categories using semantic matching
+    try:
+        top_categories = semantic_category_service.find_relevant_categories(
+            user_preference_text=user_preference,
+            valid_city_categories=destination_profile,
+            top_n=10,  # Get top 10 categories for Pass B
+        )
+    except Exception as e:
+        print(f"[Pass B] ERROR in category matching: {e}")
+        # Fallback to default categories
+        top_categories = [
+            ("tourist_attraction", 0.5),
+            ("park", 0.5),
+            ("museum", 0.5),
+            ("restaurant", 0.5),
+            ("cafe", 0.5),
+        ]
+
+    top_5 = [cat for cat, _ in top_categories[:5]]
+    print(f"[Pass B] Top matched categories: {top_5}")
+
+    # Search using semantic categories
+    # Use local seen_ids to track duplicates within Pass B only
+    # Don't modify the passed seen_ids - caller will handle that
+    local_seen_ids = seen_ids.copy()
+    new_venues = []
+    targeted_search_types = [cat for cat, _ in top_categories]
+    total_searched = 0
+    total_found = 0
+    total_duplicates = 0
+
+    for category in targeted_search_types:
+        print(f"[Pass B] Searching for '{category}' venues...")
+        try:
+            venues = places_service.search_places(
+                location=destination,
+                query=category.replace("_", " "),
+                radius=10000,
+                require_photo=True,
+                allowed_types=[category],
+                max_pages=4,  # Increased from 2 to fetch 2x more results per category
+                place_id=destination_place_id,
+            )
+            total_searched += 1
+            total_found += len(venues)
+            print(f"[Pass B] Found {len(venues)} venues " f"for '{category}'")
+
+            # Filter out duplicates (check against both Pass A and Pass B)
+            category_new = 0
+            for venue in venues:
+                if venue["place_id"] not in local_seen_ids:
+                    new_venues.append(venue)
+                    local_seen_ids.add(venue["place_id"])
+                    category_new += 1
+                else:
+                    total_duplicates += 1
+
+            print(
+                f"[Pass B] Added {category_new} new venues "
+                f"({len(venues) - category_new} duplicates) for '{category}'"
+            )
+
+            # Stop if we have enough
+            if len(new_venues) >= pass_b_max:
+                print(
+                    f"[Pass B] Reached target ({pass_b_max} venues), " "stopping search"
+                )
+                break
+        except Exception as e:
+            print(f"[Pass B] ERROR searching '{category}': {e}")
+            continue
+
+    print(
+        f"[Pass B] Summary: Searched {total_searched} categories, "
+        f"found {total_found} total venues, {total_duplicates} duplicates, "
+        f"{len(new_venues)} new venues added"
+    )
+
+    return new_venues[:pass_b_max]
 
 
 def _parse_itinerary_json_or_502(raw_text: str) -> ItineraryDocument:
@@ -154,6 +483,9 @@ def generate_itinerary_v2(
     trip_name = payload.trip_name
     traveler_name = payload.traveler_name
     destination = payload.destination
+    destination_place_id = (
+        payload.destination_place_id
+    )  # Google Place ID from autocomplete
     dates = payload.dates
     duration = payload.duration or ""
     clerk_user_id = payload.clerk_user_id
@@ -228,18 +560,9 @@ def generate_itinerary_v2(
     # Extract structured info from other_interests using NLP
     from app.core.preference_extractor import extract_preferences_from_text
 
-    extracted_from_other = {
-        "search_queries": [],
-        "place_types": [],
-        "keywords": [],
-        "preference_signals": {},
-    }
-
+    # Initialize with extraction from other_interests if available, otherwise empty
     if other_interests_texts:
-        # Combine all other_interests texts
         combined_text = " ".join(other_interests_texts)
-
-        # Extract with context
         extracted_from_other = extract_preferences_from_text(
             combined_text,
             context={
@@ -248,20 +571,19 @@ def generate_itinerary_v2(
                 "selected_interests": interests,
             },
         )
-
         print(
             f"[PreferenceExtractor] Extracted {len(extracted_from_other['search_queries'])} search queries from other_interests"
         )
+    else:
+        extracted_from_other = {
+            "search_queries": [],
+            "place_types": [],
+            "keywords": [],
+            "preference_signals": {},
+        }
 
     # Extract structured info from vibe_notes (solo trips only, not group)
-    extracted_from_vibe = {
-        "search_queries": [],
-        "place_types": [],
-        "keywords": [],
-        "preference_signals": {},
-    }
-
-    if vibe_notes and trip_type == "solo":
+    if vibe_notes:
         extracted_from_vibe = extract_preferences_from_text(
             vibe_notes,
             context={
@@ -296,6 +618,38 @@ def generate_itinerary_v2(
             f"[VibeNotes] Extracted {len(extracted_from_vibe['search_queries'])} search queries from vibe notes"
         )
 
+    # Group planning flow stores vibe information in payload.notes
+    if trip_type == "group" and payload.notes:
+        extracted_group_vibe = extract_preferences_from_text(
+            payload.notes,
+            context={
+                "destination": destination,
+                "trip_type": trip_type,
+                "selected_interests": interests,
+            },
+        )
+
+        extracted_from_other["search_queries"].extend(
+            extracted_group_vibe["search_queries"]
+        )
+        extracted_from_other["place_types"].extend(extracted_group_vibe["place_types"])
+        extracted_from_other["keywords"].extend(extracted_group_vibe["keywords"])
+
+        for key, value in extracted_group_vibe["preference_signals"].items():
+            if key not in extracted_from_other["preference_signals"]:
+                extracted_from_other["preference_signals"][key] = []
+            existing = extracted_from_other["preference_signals"][key]
+            if isinstance(existing, str):
+                extracted_from_other["preference_signals"][key] = [existing]
+            if isinstance(value, list):
+                extracted_from_other["preference_signals"][key].extend(value)
+            else:
+                extracted_from_other["preference_signals"][key].append(value)
+
+        print(
+            f"[GroupNotes] Extracted {len(extracted_group_vibe['search_queries'])} search queries from group vibe notes"
+        )
+
     # Combine all extracted keywords for scoring
     all_extracted_keywords = extracted_from_other["keywords"]
 
@@ -308,28 +662,38 @@ def generate_itinerary_v2(
     # --- PRE-FLIGHT FEASIBILITY CHECK ---
     # Quick sanity check: does Google Places know *anything* about this destination?
     print(f"[Pre-flight] Checking feasibility for {destination}...")
+    if destination_place_id:
+        print(f"[Pre-flight] Using place_id: {destination_place_id}")
+
+    # Collect warnings to return to user
+    warnings: list[str] = []
     try:
         pre_flight_venues = places_service.search_places(
             location=destination,
             query="tourist attractions",
             radius=20000,  # 20km radius for broad coverage
+            place_id=destination_place_id,  # Use place_id if available
         )
         pre_flight_count = len(pre_flight_venues)
         print(f"[Pre-flight] Found {pre_flight_count} venues in exploratory search")
 
-        if pre_flight_count < 10:
+        if pre_flight_count < 20:  # Doubled from 10 to 20
             # Impossible destination (e.g., North Korea, conflict zones)
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"We couldn't find enough activities in {destination} to create an itinerary. "
-                    "This location may not be suitable for travel planning due to limited tourism "
-                    "infrastructure, travel restrictions, or data availability. "
-                    "Please try a different destination."
+                    f"We couldn't find enough activities in {destination} to create a quality itinerary. "
+                    "This location may have limited tourism infrastructure or data availability. "
+                    "Please try a different destination, reduce your trip duration, or select a nearby major city."
                 ),
             )
-        elif pre_flight_count < 30:
+        elif pre_flight_count < 60:  # Doubled from 30 to 60
             # Marginal destination - warn but proceed
+            warning_msg = (
+                f"Limited activities found for {destination}. "
+                "Consider reducing your trip duration or selecting a nearby major city for better results."
+            )
+            warnings.append(warning_msg)
             print(
                 f"[Pre-flight] WARNING: Limited data for {destination}. "
                 "Itinerary quality may be affected."
@@ -359,15 +723,15 @@ def generate_itinerary_v2(
     if num_days >= 6:
         # Long trips: need significantly more headroom
         min_candidates = 120
-        max_candidates = 220
+        max_candidates = 440  # Doubled from 220
     elif num_days >= 4:
         # Mid-length trips
         min_candidates = 80
-        max_candidates = 180
+        max_candidates = 360  # Doubled from 180
     else:
         # Short trips
         min_candidates = 50
-        max_candidates = 150
+        max_candidates = 300  # Doubled from 150
 
     max_results = max(min_candidates, min(base_target, max_candidates))
     print(
@@ -394,12 +758,15 @@ def generate_itinerary_v2(
         budget_style=budget_style,
         max_results=max_results,
         require_photo=True,
+        pace_style=pace_style,
         extracted_queries=extracted_from_other[
             "search_queries"
         ],  # NEW: Pass extracted queries
         extracted_place_types=extracted_from_other[
             "place_types"
         ],  # NEW: Pass extracted types
+        place_id=destination_place_id,  # Use place_id if available
+        max_pages=3,  # Increased from default 1 to fetch 3x more results
     )
     pass_a_count = len(candidates)
     print(f"[Pass A] Found {pass_a_count} candidates")
@@ -411,45 +778,33 @@ def generate_itinerary_v2(
             "Broadening search..."
         )
 
-        # Broader search: no interest filter, relax photo requirement
-        broader_types = [
-            "tourist_attraction",
-            "point_of_interest",
-            "museum",
-            "park",
-            "shopping_mall",
-            "restaurant",
-            "cafe",
-            "bar",
-            "landmark",
-            "art_gallery",
-            "aquarium",
-            "zoo",
-            "amusement_park",
-            "stadium",
-            "theater",
-            "casino",
-            "night_club",
-            "spa",
-            "beach",
-            "natural_feature",
-            "church",
-            "mosque",
-            "temple",
-        ]
+        # Calculate how many venues Pass B needs to find
+        pass_b_max = max(
+            max_results - pass_a_count,
+            total_needed * 3,  # Ensure we search for at least 3x what we need
+        )
 
-        # Allow some venues without photos (up to 15%)
-        broad_search_results = places_service.search_places(
-            location=destination,
-            query="things to do",
-            radius=10000,
-            allowed_types=broader_types,
+        # Track seen place IDs to avoid duplicates
+        seen_ids = {v["place_id"] for v in candidates}
+
+        # Execute Pass B using semantic category matching
+        broader_candidates = _pass_b(
+            destination=destination,
+            destination_place_id=destination_place_id,
+            budget_style=budget_style,
+            pace_style=pace_style,
+            pass_b_max=pass_b_max,
+            seen_ids=seen_ids,
+            selected_interests=interests,
+            other_interests_texts=other_interests_texts,
+            vibe_notes=vibe_notes,
+            payload_notes=(payload.notes if hasattr(payload, "notes") else None),
+            trip_type=trip_type,
         )
 
         # Add unique results from Pass B
-        seen_ids = {v["place_id"] for v in candidates}
         added_count = 0
-        for venue in broad_search_results:
+        for venue in broader_candidates:
             if venue["place_id"] not in seen_ids:
                 candidates.append(venue)
                 seen_ids.add(venue["place_id"])
@@ -458,6 +813,131 @@ def generate_itinerary_v2(
                     break
 
         print(f"[Pass B] Added {added_count} venues. Total: {len(candidates)}")
+
+    # --- LOCATION VALIDATION ---
+    # Filter out venues that are clearly not in the destination
+    from app.core.geo_utils import haversine_distance
+
+    def extract_city_country(dest: str) -> tuple[str, str]:
+        """Extract city and country from destination string."""
+        if not dest:
+            return "", ""
+        parts = dest.split(",")
+        city = parts[0].strip() if parts else ""
+        country = parts[-1].strip() if len(parts) > 1 else ""
+        return city, country
+
+    def is_valid_location(
+        venue: dict[str, Any],
+        destination_city: str,
+        destination_country: str,
+        destination_lat: float | None,
+        destination_lng: float | None,
+        max_distance_km: float = 15.0,
+    ) -> bool:
+        """
+        Validate that a venue is actually in the destination location.
+
+        Checks:
+        1. Address contains city name or country
+        2. Distance from destination center (if coordinates available)
+        3. Country matches (if country specified)
+        """
+        address = (venue.get("address") or "").lower()
+        venue_lat = venue.get("lat")
+        venue_lng = venue.get("lng")
+
+        # Check 1: Address validation
+        city_lower = destination_city.lower()
+        country_lower = destination_country.lower()
+
+        # Must contain city name OR country in address
+        address_valid = False
+        if city_lower and city_lower in address:
+            address_valid = True
+        elif country_lower and country_lower in address:
+            address_valid = True
+
+        # If no city/country extracted, skip address check
+        if not city_lower and not country_lower:
+            address_valid = True
+
+        # Check 2: Country validation (strict if country specified)
+        country_valid = True
+        if country_lower:
+            # Check if address contains wrong country indicators
+            wrong_countries = []
+            if country_lower not in ["usa", "us", "united states"]:
+                wrong_countries.extend(["united states", " usa", ", usa", " u.s.a"])
+            if country_lower not in ["uk", "united kingdom", "england"]:
+                wrong_countries.extend(["united kingdom", " uk", ", uk", " england"])
+
+            # If address contains wrong country, reject
+            for wrong_country in wrong_countries:
+                if wrong_country.lower() in address:
+                    country_valid = False
+                    break
+
+        # Check 3: Distance validation (if coordinates available)
+        distance_valid = True
+        if destination_lat and destination_lng and venue_lat and venue_lng:
+            distance = haversine_distance(
+                destination_lat, destination_lng, venue_lat, venue_lng
+            )
+            if distance > max_distance_km:
+                distance_valid = False
+
+        # All checks must pass
+        return address_valid and country_valid and distance_valid
+
+    # Get destination coordinates for distance validation
+    destination_city, destination_country = extract_city_country(destination)
+    destination_coords = None
+    if destination_place_id:
+        # Use Place Details to get exact coordinates
+        try:
+            place_details = places_service.get_place_details(destination_place_id)
+            if place_details and place_details.get("lat") and place_details.get("lng"):
+                destination_coords = (
+                    place_details["lat"],
+                    place_details["lng"],
+                )
+        except Exception as e:
+            print(f"[LocationValidation] Failed to get destination coords: {e}")
+    else:
+        # Fallback to geocoding
+        try:
+            coords = places_service.geocode_location(destination)
+            if coords:
+                destination_coords = (coords["lat"], coords["lng"])
+        except Exception as e:
+            print(f"[LocationValidation] Failed to geocode destination: {e}")
+
+    # Filter candidates by location
+    original_count = len(candidates)
+    destination_lat = destination_coords[0] if destination_coords else None
+    destination_lng = destination_coords[1] if destination_coords else None
+
+    filtered_candidates = []
+    invalid_count = 0
+    for venue in candidates:
+        if is_valid_location(
+            venue,
+            destination_city,
+            destination_country,
+            destination_lat,
+            destination_lng,
+        ):
+            filtered_candidates.append(venue)
+        else:
+            invalid_count += 1
+
+    candidates = filtered_candidates
+    if invalid_count > 0:
+        print(
+            f"[LocationValidation] Filtered out {invalid_count} invalid venues "
+            f"({original_count} -> {len(candidates)})"
+        )
 
     # --- POST-FETCH FEASIBILITY CHECK ---
     # More stringent threshold based on pace
@@ -477,13 +957,13 @@ def generate_itinerary_v2(
             )
         elif len(candidates) > 50:
             detail = (
-                f"We found activities in {destination}, but many lack photos or detailed information. "
-                "We're working on improving coverage for this area. Try a different destination."
+                f"We found activities in {destination}, but not enough meet our quality standards "
+                "for a complete itinerary. Try a different destination or a shorter trip duration."
             )
         else:
             detail = (
                 f"We couldn't find enough activities in {destination} to create a quality itinerary. "
-                "Try another destination."
+                "Try reducing your trip duration or selecting a nearby major city."
             )
 
         raise HTTPException(status_code=400, detail=detail)
@@ -586,35 +1066,36 @@ def generate_itinerary_v2(
         # Fallback to keyword only
         return keyword_score
 
-    note_boost_terms = [
-        "museum",
-        "coffee",
-        "hike",
-        "beach",
-        "park",
-        "landmark",
-        "live music",
-    ]
-
-    # Add extracted keywords to boost terms
-    if all_extracted_keywords:
-        note_boost_terms.extend(
-            all_extracted_keywords[:10]
-        )  # Limit to 10 additional terms
-
+    # Use only extracted keywords for boost (no hardcoded terms)
+    # This ensures we only boost venues based on user preferences, not generic terms
     def notes_boost(v: dict[str, Any]) -> float:
+        """
+        Boost venues that match extracted keywords or notes_text.
+        No hardcoded generic terms to avoid boosting venues globally.
+        """
         text = (
             (v.get("name") or "")
             + " "
             + ((v.get("types") and " ".join(v.get("types"))) or "")
         )
         text = text.lower()
+
         # Reduced boost weight since we now have interest_match_score
-        # Check against both extracted keywords and legacy notes_text
         boost_val = 0.15 if len(candidates) >= 100 else 0.1
-        boost_terms_to_check = note_boost_terms.copy()
+
+        # Only check extracted keywords and notes_text (user-provided)
+        boost_terms_to_check = []
+        if all_extracted_keywords:
+            boost_terms_to_check.extend(
+                [k.lower() for k in all_extracted_keywords[:10]]
+            )
         if notes_text:
             boost_terms_to_check.extend(notes_text.split())
+
+        # Only boost if there are actual user-provided terms
+        if not boost_terms_to_check:
+            return 0.0
+
         return boost_val if any(t in text for t in boost_terms_to_check) else 0.0
 
     # Batch compute semantic scores for all venues (much faster!)
@@ -723,24 +1204,70 @@ def generate_itinerary_v2(
 
     print(f"[Selection] Chose {len(chosen)} venues from {len(candidates)} candidates")
 
-    # Build ItineraryDocument with per-day backfill
+    # Fetch opening hours for chosen venues
+    print("[OpeningHours] Fetching opening hours for selected venues...")
+    for v in chosen:
+        if v.get("place_id"):
+            details = places_service.get_place_details(v["place_id"])
+            if details and details.get("opening_hours"):
+                v["opening_hours"] = details["opening_hours"]
+                print(f"[OpeningHours] Fetched hours for {v.get('name')}")
+            else:
+                v["opening_hours"] = []
+
+    # Create opening hours cache (parse once per venue)
+    opening_hours_cache: dict[str, dict[str, dict[str, str | None]]] = {}
+    from app.core.opening_hours_utils import parse_opening_hours
+
+    def get_parsed_opening_hours(
+        place_id: str | None, venue_data: dict[str, Any] | None
+    ) -> dict[str, dict[str, str | None]] | None:
+        """Get parsed opening hours, using cache if available."""
+        if not place_id:
+            return None
+
+        if place_id in opening_hours_cache:
+            return opening_hours_cache[place_id]
+
+        if venue_data:
+            weekday_text = venue_data.get("opening_hours", [])
+            if weekday_text:
+                parsed = parse_opening_hours(weekday_text)
+                opening_hours_cache[place_id] = parsed
+                return parsed
+
+        return None
+
+    # Distribute venues across days with category diversity
+    print("[Diversity] Distributing venues across days with category balance...")
+    from app.core.activity_diversity import distribute_venues_with_diversity
+
+    # Calculate target activities per day
+    target_activities_per_day = []
+    for plan in daily_plan:
+        target_n = (plan["min_activities"] + plan["max_activities"]) // 2
+        target_activities_per_day.append(target_n)
+
+    # Use diversity-aware distribution
+    days_venues = distribute_venues_with_diversity(
+        chosen,
+        num_days=len(day_list),
+        activities_per_day=target_activities_per_day,
+        pace_style=pace_style,
+    )
+
+    # Build ItineraryDocument from distributed venues
     days: list[Day] = []
-    idx = 0
-    remaining_unassigned = [v for v in scored if v["venue"]["place_id"] not in seen_ids]
 
     for i, d in enumerate(day_list):
-        plan = daily_plan[i]
-        target_n = (plan["min_activities"] + plan["max_activities"]) // 2
+        day_venues = days_venues[i]
         activities: list[Activity] = []
 
-        # Primary assignment from chosen venues
-        for j in range(target_n):
-            if idx >= len(chosen):
-                break
-            v = chosen[idx]
-            idx += 1
-            # assign simple timeslots
-            slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][j % 5]
+        for v in day_venues:
+            # assign simple timeslots (will be refined by LLM)
+            slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][
+                len(activities) % 5
+            ]
             img = None
             if v.get("photo_reference"):
                 url = (
@@ -758,46 +1285,6 @@ def generate_itinerary_v2(
                     place_id=v.get("place_id"),
                 )
             )
-
-        # Per-day backfill if short
-        if len(activities) < plan["min_activities"]:
-            shortfall = plan["min_activities"] - len(activities)
-            print(f"[Day {i+1}] Backfilling {shortfall} activities")
-
-            for _ in range(shortfall):
-                if remaining_unassigned:
-                    item = remaining_unassigned.pop(0)
-                    v = item["venue"]
-                    seen_ids.add(v["place_id"])
-
-                    slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][
-                        len(activities) % 5
-                    ]
-                    img = None
-                    if v.get("photo_reference"):
-                        url = (
-                            places_service.get_proxy_photo_url(
-                                v["photo_reference"], base_url
-                            )
-                            or None
-                        )
-                        img = url  # Use string directly (can be relative or absolute)
-
-                    activities.append(
-                        Activity(
-                            time=slot,
-                            title=v.get("name") or "Activity",
-                            location=v.get("address") or destination,
-                            description="",
-                            image=img,
-                            place_id=v.get("place_id"),
-                        )
-                    )
-                else:
-                    # No more venues - this shouldn't happen given our checks, but log it
-                    print(f"[Day {i+1}] WARNING: Ran out of venues for backfill")
-                    break
-
         days.append(
             Day(
                 date=d.strftime("%A, %B %d"),
@@ -822,23 +1309,49 @@ def generate_itinerary_v2(
             if not day.activities:
                 continue
 
-            # Build activity context with types and locations
+            # Build activity context with types, locations, opening hours, and distances
             activity_context = []
             for idx, act in enumerate(day.activities):
-                # Extract primary venue type
+                # Extract venue info
                 venue_type = "general"
+                venue_hours = None
+                venue_distance_to_next = None
+
                 if hasattr(act, "place_id") and act.place_id:
-                    # Find the original venue to get types
+                    # Find the original venue to get types, opening hours, and distance
                     for v in chosen:
                         if v.get("place_id") == act.place_id:
                             types = v.get("types", [])
                             if types:
                                 venue_type = types[0].replace("_", " ")
+                            venue_hours = v.get("opening_hours", [])
                             break
 
-                activity_context.append(
-                    f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
-                )
+                # Get distance to next activity (if available)
+                if idx < len(day.activities) - 1:
+                    # Check if distance is already calculated (from previous logic)
+                    if hasattr(act, "distance_to_next") and act.distance_to_next:
+                        venue_distance_to_next = act.distance_to_next
+
+                # Build context string with opening hours
+                context_str = f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
+
+                if venue_hours:
+                    # Extract hours for the current day
+                    day_name = day.date.split(",")[
+                        0
+                    ]  # e.g., "Monday" from "Monday, January 1"
+                    relevant_hours = [h for h in venue_hours if day_name in h]
+                    if relevant_hours:
+                        context_str += f" | Hours: {relevant_hours[0]}"
+
+                if venue_distance_to_next:
+                    from app.core.travel_time_utils import estimate_travel_time
+
+                    travel_mins = estimate_travel_time(venue_distance_to_next)
+                    context_str += f" | {venue_distance_to_next}km to next ({travel_mins}min travel)"
+
+                activity_context.append(context_str)
 
             # Interpret schedule preference for timing guidance (3 profiles)
             if schedule_style <= 33:
@@ -857,20 +1370,16 @@ def generate_itinerary_v2(
                 "content": (
                     "You are a travel itinerary timing optimizer. Given a list of activities for a single day, "
                     "assign realistic start times considering:\n\n"
-                    "VENUE OPERATING HOURS (respect these constraints):\n"
-                    "- Museums/Attractions: 9:00 AM - 5:00/6:00 PM\n"
-                    "- Restaurants (lunch): 11:30 AM - 2:30 PM\n"
-                    "- Restaurants (dinner): 5:00 PM - 10:00 PM\n"
-                    "- Cafes/Breakfast: 7:00 AM - 11:00 AM\n"
-                    "- Bars/Nightlife: 7:00 PM onwards\n"
-                    "- Parks/Outdoor: Daylight hours (6:00 AM - sunset)\n"
-                    "- Shopping: 10:00 AM - 8:00 PM\n\n"
-                    "OTHER FACTORS:\n"
-                    "- Typical activity duration (museums 2-3h, meals 1-2h, attractions 1-2h)\n"
-                    "- Travel time between venues (assume 15-30min in same area)\n"
-                    "- Natural pacing (avoid rushing, include breaks)\n\n"
+                    "IMPORTANT RULES:\n"
+                    "1. RESPECT ACTUAL VENUE HOURS: Each activity shows its actual operating hours (if available). "
+                    "Schedule activities ONLY during their open hours.\n"
+                    "2. ACCOUNT FOR TRAVEL TIME: Travel time and distance to the next activity are provided. "
+                    "Ensure next activity starts AFTER current activity ends + travel time + small buffer.\n"
+                    "3. ESTIMATE ACTIVITY DURATION: Museums/attractions (2-3h), meals (1-2h), cafes (45min-1h), "
+                    "bars/nightlife (2-3h), parks (1-2h), shopping (1-2h).\n"
+                    "4. NATURAL PACING: Allow 10-15min buffer between activities for breaks/transitions.\n\n"
                     f"SCHEDULE PREFERENCE: {schedule_guidance}\n"
-                    "Shift activities earlier/later within realistic venue hours based on this preference.\n\n"
+                    "Shift activities earlier/later within venue hours based on this preference.\n\n"
                     "Return ONLY a JSON array of time strings in 12-hour format (e.g., ['9:00 AM', '12:30 PM', '3:00 PM']).\n"
                     "The array must have exactly the same number of times as activities provided."
                 ),
@@ -923,16 +1432,79 @@ def generate_itinerary_v2(
                 print(f"[Timing] JSON decode error: {e}")
                 raise ValueError(f"Invalid JSON format: {e}")
 
-            # Validate and apply times
+            # Validate and apply times with opening hours check
             if isinstance(times, list) and len(times) == len(day.activities):
+                from app.core.opening_hours_utils import (
+                    adjust_time_to_opening_hours,
+                    get_default_hours_by_type,
+                    is_venue_open_at_time,
+                )
+
+                day_name = day.date.split(",")[0]  # Extract day name (e.g., "Monday")
+
                 for idx, time_str in enumerate(times):
-                    day.activities[idx].time = time_str
-                print(f"[Day {day_idx+1}] Applied {len(times)} LLM-generated times")
+                    act = day.activities[idx]
+                    # Find venue opening hours (using cache)
+                    if act.place_id:
+                        for v in chosen:
+                            if v.get("place_id") == act.place_id:
+                                # Use cached parsed hours if available
+                                parsed_hours = get_parsed_opening_hours(act.place_id, v)
+
+                                if parsed_hours:
+                                    is_open, reason = is_venue_open_at_time(
+                                        parsed_hours, day_name, time_str
+                                    )
+
+                                    if not is_open:
+                                        # Adjust time to fit opening hours
+                                        adjusted_time = adjust_time_to_opening_hours(
+                                            time_str, parsed_hours, day_name
+                                        )
+                                        print(
+                                            f"[OpeningHours] Adjusted '{act.title}' from {time_str} to {adjusted_time}: {reason}"
+                                        )
+                                        time_str = adjusted_time
+                                else:
+                                    # No opening hours data - use type-based defaults
+                                    default_hours = get_default_hours_by_type(
+                                        v.get("types", [])
+                                    )
+                                    is_open, reason = is_venue_open_at_time(
+                                        default_hours, day_name, time_str
+                                    )
+
+                                    if not is_open:
+                                        adjusted_time = adjust_time_to_opening_hours(
+                                            time_str, default_hours, day_name
+                                        )
+                                        print(
+                                            f"[OpeningHours] Adjusted '{act.title}' using defaults from {time_str} to {adjusted_time}"
+                                        )
+                                        time_str = adjusted_time
+                                break
+
+                    act.time = time_str
+
+                print(
+                    f"[Day {day_idx+1}] Applied {len(times)} times (with opening hours validation)"
+                )
+
+                # Optimize times: sort chronologically and adjust for travel constraints
+                _optimize_day_times(day, chosen, opening_hours_cache, pace_style)
             else:
                 print(
                     f"[Day {day_idx+1}] WARNING: LLM returned invalid timing ({len(times)} vs {len(day.activities)})"
                 )
-                # Fallback to rule-based times
+                # Fallback to rule-based times with opening hours validation
+                from app.core.opening_hours_utils import (
+                    adjust_time_to_opening_hours,
+                    get_default_hours_by_type,
+                    parse_opening_hours,
+                )
+
+                day_name = day.date.split(",")[0]
+
                 for idx, act in enumerate(day.activities):
                     fallback_slots = [
                         "9:00 AM",
@@ -941,12 +1513,44 @@ def generate_itinerary_v2(
                         "6:00 PM",
                         "8:30 PM",
                     ]
-                    act.time = fallback_slots[idx % len(fallback_slots)]
+                    time_str = fallback_slots[idx % len(fallback_slots)]
+
+                    # Validate against opening hours (using cache)
+                    if act.place_id:
+                        for v in chosen:
+                            if v.get("place_id") == act.place_id:
+                                # Use cached parsed hours if available
+                                parsed_hours = get_parsed_opening_hours(act.place_id, v)
+                                if parsed_hours:
+                                    time_str = adjust_time_to_opening_hours(
+                                        time_str, parsed_hours, day_name
+                                    )
+                                else:
+                                    default_hours = get_default_hours_by_type(
+                                        v.get("types", [])
+                                    )
+                                    time_str = adjust_time_to_opening_hours(
+                                        time_str, default_hours, day_name
+                                    )
+                                break
+
+                    act.time = time_str
+
+                # Optimize times: sort chronologically and adjust for travel constraints
+                _optimize_day_times(day, chosen, opening_hours_cache, pace_style)
 
     except Exception as e:
         print(f"[Timing] Error generating times with LLM: {e}")
-        # Fallback: assign rule-based times
+        # Fallback: assign rule-based times with opening hours validation
+        from app.core.opening_hours_utils import (
+            adjust_time_to_opening_hours,
+            get_default_hours_by_type,
+            parse_opening_hours,
+        )
+
         for day in days:
+            day_name = day.date.split(",")[0]
+
             for idx, act in enumerate(day.activities):
                 fallback_slots = [
                     "9:00 AM",
@@ -955,11 +1559,41 @@ def generate_itinerary_v2(
                     "6:00 PM",
                     "8:30 PM",
                 ]
-                act.time = fallback_slots[idx % len(fallback_slots)]
+                time_str = fallback_slots[idx % len(fallback_slots)]
 
-    # Calculate distances between consecutive activities
-    print("[Distance] Calculating distances between activities...")
-    from app.core.geo_utils import haversine_distance
+                # Validate against opening hours (using cache)
+                if act.place_id:
+                    for v in chosen:
+                        if v.get("place_id") == act.place_id:
+                            # Use cached parsed hours if available
+                            parsed_hours = get_parsed_opening_hours(act.place_id, v)
+                            if parsed_hours:
+                                time_str = adjust_time_to_opening_hours(
+                                    time_str, parsed_hours, day_name
+                                )
+                            else:
+                                default_hours = get_default_hours_by_type(
+                                    v.get("types", [])
+                                )
+                                time_str = adjust_time_to_opening_hours(
+                                    time_str, default_hours, day_name
+                                )
+                            break
+
+                act.time = time_str
+
+            # Optimize times: sort chronologically and adjust for travel constraints
+            _optimize_day_times(day, chosen, opening_hours_cache, pace_style)
+
+    # Calculate distances and validate timing with travel time
+    print(
+        "[Distance] Calculating distances and validating travel time between activities..."
+    )
+    from app.core.travel_time_utils import (
+        add_minutes_to_time,
+        estimate_activity_duration,
+        estimate_travel_time,
+    )
 
     for day_idx, day in enumerate(days):
         if len(day.activities) < 2:
@@ -972,12 +1606,14 @@ def generate_itinerary_v2(
             # Find lat/lng for both activities from chosen venues
             current_coords = None
             next_coords = None
+            current_venue_types = []
 
             if current_act.place_id:
                 for v in chosen:
                     if v.get("place_id") == current_act.place_id:
                         if v.get("lat") is not None and v.get("lng") is not None:
                             current_coords = (v["lat"], v["lng"])
+                        current_venue_types = v.get("types", [])
                         break
 
             if next_act.place_id:
@@ -994,6 +1630,22 @@ def generate_itinerary_v2(
                 )
                 # Round to 1 decimal place
                 current_act.distance_to_next = round(distance_km, 1)
+
+                # Validate timing: check if there's enough time between activities
+                travel_mins = estimate_travel_time(distance_km)
+                activity_duration = estimate_activity_duration(
+                    current_venue_types, pace_style
+                )
+
+                # Calculate expected end time of current activity
+                expected_next_start = add_minutes_to_time(
+                    current_act.time, activity_duration + travel_mins
+                )
+
+                print(
+                    f"[Day {day_idx+1}] Activity {idx+1} → {idx+2}: {distance_km}km, "
+                    f"{travel_mins}min travel, duration ~{activity_duration}min"
+                )
 
         print(
             f"[Day {day_idx+1}] Calculated {len([a for a in day.activities if a.distance_to_next is not None])} distances"
@@ -1138,26 +1790,73 @@ def generate_itinerary_v2(
             # Non-fatal: proceed without group metadata if anything fails
             pass
 
-    # Add cover if possible
+    # Add cover image using Unsplash (with caching)
     try:
-        cover_qs = [
-            f"{destination} skyline",
-            f"{destination} cityscape",
-            f"{destination} landmark",
-        ]
-        for q in cover_qs:
-            res = places_service.search_places(location=destination, query=q)
-            if res and res[0].get("photo_reference"):
-                url = places_service.get_proxy_photo_url(
-                    res[0]["photo_reference"], base_url
-                )
-                if url:
-                    doc.cover_image = url  # Use string directly (can be relative or absolute)
-                    break
-    except Exception:
-        pass
+        if cover_image_service:
+            cover_image_url = cover_image_service.get_cover_image(destination, repo)
+            if cover_image_url:
+                doc.cover_image = cover_image_url
+    except Exception as e:
+        print(f"[CoverImage] Failed to get cover image: {e}")
+        # Non-fatal: continue without cover image
 
     itn_id = repo.save_itinerary(doc, clerk_user_id=clerk_user_id)
+
+    # Check if this is the user's first itinerary and send email
+    try:
+        # Get user synchronously (MongoDB find_one is sync)
+        user_doc = repo.users_collection.find_one({"clerk_user_id": clerk_user_id})
+        if user_doc:
+            user_doc.pop("_id", None)
+            from app.core.schemas import User
+
+            # Ensure first_itinerary_email_sent exists (migration for existing users)
+            if "first_itinerary_email_sent" not in user_doc:
+                user_doc["first_itinerary_email_sent"] = False
+
+            user = User(**{k: v for k, v in user_doc.items() if k != "hashed_password"})
+
+            # Check if user hasn't received first itinerary email yet
+            if not user.first_itinerary_email_sent:
+                import os
+
+                from app.core.email_service import email_service
+
+                frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
+                itinerary_link = f"{frontend_url}/trips"
+
+                # Format dates for email
+                trip_dates = doc.dates
+
+                # Extract first name
+                first_name = (
+                    user.first_name or user.email.split("@")[0].split(".")[0].title()
+                )
+
+                # Send email
+                email_service.send_first_itinerary_email(
+                    recipient_email=user.email,
+                    recipient_first_name=first_name,
+                    destination=destination,
+                    trip_name=trip_name,
+                    trip_dates=trip_dates,
+                    itinerary_link=itinerary_link,
+                )
+
+                # Mark email as sent in database
+                repo.users_collection.update_one(
+                    {"clerk_user_id": clerk_user_id},
+                    {
+                        "$set": {
+                            "first_itinerary_email_sent": True,
+                            "updated_at": datetime.utcnow(),
+                        }
+                    },
+                )
+                print(f"[Email] Sent first itinerary email to {user.email}")
+    except Exception as e:
+        print(f"[Email] Error sending first itinerary email: {e}")
+        # Non-fatal: continue even if email fails
 
     # Update invite with itinerary_id if this is a group trip
     if invite_id:
@@ -1171,7 +1870,11 @@ def generate_itinerary_v2(
             print(f"Error updating invite with itinerary_id: {e}")
             # Non-fatal: continue even if invite update fails
 
-    return repo.get_itinerary(itn_id) or {"id": itn_id}
+    # Return itinerary with warnings if any
+    result = repo.get_itinerary(itn_id) or {"id": itn_id}
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 @router.get("/user/me")
