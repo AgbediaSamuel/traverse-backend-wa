@@ -1,10 +1,11 @@
 import logging
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from app.core.clerk_auth import clerk_auth
 from app.core.repository import repo
 from app.core.schemas import ClerkUserSync, User
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +46,14 @@ async def get_current_user_from_clerk(
         # If email is missing from token, fetch from Clerk API
         if not user_data.get("email") and user_data.get("clerk_user_id"):
             logger.debug("Email not in token, fetching from Clerk API")
-            clerk_user_info = await clerk_auth.get_clerk_user_info(
-                user_data["clerk_user_id"]
-            )
+            clerk_user_info = await clerk_auth.get_clerk_user_info(user_data["clerk_user_id"])
             if clerk_user_info:
                 # Extract email from Clerk API response
                 primary_email = clerk_user_info.get("email_addresses", [{}])[0]
                 if primary_email:
                     user_data["email"] = primary_email.get("email_address")
                     user_data["email_verified"] = (
-                        primary_email.get("verification", {}).get("status")
-                        == "verified"
+                        primary_email.get("verification", {}).get("status") == "verified"
                     )
 
         if not user_data.get("clerk_user_id"):
@@ -88,9 +86,7 @@ async def get_current_user_from_clerk(
 
 
 async def get_current_user_optional(
-    credentials: HTTPAuthorizationCredentials | None = Depends(
-        HTTPBearer(auto_error=False)
-    ),
+    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
 ) -> User | None:
     """
     Optional dependency to get current user from Clerk JWT token.
@@ -113,9 +109,7 @@ async def get_current_active_user(
     Raises HTTP 400 if user is inactive.
     """
     if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
 
 

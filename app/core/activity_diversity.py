@@ -134,18 +134,12 @@ def calculate_diversity_score(day_activities: list[dict[str, Any]]) -> float:
     # But cap at reasonable max (6-7 categories for typical day)
     max_possible_categories = min(total_activities, 7)
 
-    diversity = (
-        unique_categories / max_possible_categories
-        if max_possible_categories > 0
-        else 1.0
-    )
+    diversity = unique_categories / max_possible_categories if max_possible_categories > 0 else 1.0
 
     return min(1.0, diversity)
 
 
-def get_category_limit_for_day(
-    category: str, total_activities: int, pace_style: int
-) -> int:
+def get_category_limit_for_day(category: str, total_activities: int, pace_style: int) -> int:
     """
     Get maximum number of activities from a single category allowed per day.
 
@@ -218,9 +212,7 @@ def distribute_venues_with_diversity(
 
             # Check category limit for this day
             current_count = day_category_counts[day_idx].get(category, 0)
-            limit = get_category_limit_for_day(
-                category, activities_per_day[day_idx], pace_style
-            )
+            limit = get_category_limit_for_day(category, activities_per_day[day_idx], pace_style)
 
             if current_count >= limit:
                 continue

@@ -131,9 +131,7 @@ class SemanticCategoryService:
             type_descriptions = [
                 f"A place of type: {t.replace('_', ' ')}" for t in GOOGLE_PLACE_TYPES
             ]
-            self.type_embeddings = self.model.encode(
-                type_descriptions, show_progress_bar=False
-            )
+            self.type_embeddings = self.model.encode(type_descriptions, show_progress_bar=False)
             self._model_loaded = True
         except Exception as e:
             print(f"[SemanticCategoryService] Failed to load model: {e}")
@@ -164,10 +162,7 @@ class SemanticCategoryService:
 
         # Validate input
         if not user_preference_text or not user_preference_text.strip():
-            print(
-                "[SemanticCategoryService] WARNING: Empty preference text, "
-                "using default"
-            )
+            print("[SemanticCategoryService] WARNING: Empty preference text, " "using default")
             user_preference_text = "tourist attractions, popular places"
 
         # Generate embedding for user preference
@@ -197,8 +192,7 @@ class SemanticCategoryService:
         # Check for NaN or inf values
         if np.any(np.isnan(similarities)) or np.any(np.isinf(similarities)):
             print(
-                "[SemanticCategoryService] WARNING: NaN or Inf in similarities, "
-                "replacing with 0"
+                "[SemanticCategoryService] WARNING: NaN or Inf in similarities, " "replacing with 0"
             )
             similarities = np.nan_to_num(similarities, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -207,9 +201,7 @@ class SemanticCategoryService:
 
         # Filter to only valid city categories
         valid_scored_categories = [
-            (cat, score)
-            for cat, score in scored_categories
-            if cat in valid_city_categories
+            (cat, score) for cat, score in scored_categories if cat in valid_city_categories
         ]
 
         if len(valid_scored_categories) == 0:
@@ -225,9 +217,7 @@ class SemanticCategoryService:
                 "restaurant",
                 "cafe",
             ]
-            return [
-                (cat, 0.5) for cat in default_categories if cat in valid_city_categories
-            ]
+            return [(cat, 0.5) for cat in default_categories if cat in valid_city_categories]
 
         # Sort by similarity (highest first)
         valid_scored_categories.sort(key=lambda x: x[1], reverse=True)

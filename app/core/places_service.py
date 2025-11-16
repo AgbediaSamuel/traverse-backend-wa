@@ -38,9 +38,7 @@ class PlacesService:
         geocode_params = {"address": location, "key": self.api_key}
 
         try:
-            geocode_response = requests.get(
-                geocode_url, params=geocode_params, timeout=10
-            )
+            geocode_response = requests.get(geocode_url, params=geocode_params, timeout=10)
             geocode_response.raise_for_status()
             geocode_data = geocode_response.json()
 
@@ -72,9 +70,7 @@ class PlacesService:
         geocode_params = {"address": location, "key": self.api_key}
 
         try:
-            geocode_response = requests.get(
-                geocode_url, params=geocode_params, timeout=10
-            )
+            geocode_response = requests.get(geocode_url, params=geocode_params, timeout=10)
             geocode_response.raise_for_status()
             geocode_data = geocode_response.json()
 
@@ -124,11 +120,7 @@ class PlacesService:
             # Use Place Details API to get coordinates (more reliable)
             try:
                 place_details = self.get_place_details(place_id)
-                if (
-                    place_details
-                    and place_details.get("lat")
-                    and place_details.get("lng")
-                ):
+                if place_details and place_details.get("lat") and place_details.get("lng"):
                     lat = place_details["lat"]
                     lng = place_details["lng"]
                     print(f"[search_places] Using place_id {place_id} → ({lat}, {lng})")
@@ -155,9 +147,7 @@ class PlacesService:
                 geocode_response.raise_for_status()
                 geocode_data = geocode_response.json()
 
-                if geocode_data.get("status") != "OK" or not geocode_data.get(
-                    "results"
-                ):
+                if geocode_data.get("status") != "OK" or not geocode_data.get("results"):
                     status = geocode_data.get("status")
                     print(f"Geocoding failed for {location}: {status}")
                     return []
@@ -306,7 +296,7 @@ class PlacesService:
 
             if data.get("status") != "OK":
                 print(f"Place details failed: {data.get('status')}")
-                return None
+            return None
 
             result = data.get("result", {})
 
@@ -343,9 +333,7 @@ class PlacesService:
             print(f"Error getting place details: {e}")
             return None
 
-    def get_place_photo_url(
-        self, photo_reference: str, max_width: int = 1080
-    ) -> str | None:
+    def get_place_photo_url(self, photo_reference: str, max_width: int = 1080) -> str | None:
         """
         Get a photo URL from a photo reference.
 
@@ -463,7 +451,7 @@ class PlacesService:
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
-            
+
             if data.get("status") != "OK":
                 return []
 
@@ -491,12 +479,8 @@ class PlacesService:
                 "census",
                 "borough",
             }
-            query_tokens = {
-                token for token in query_lower.replace(",", " ").split() if token
-            }
-            query_has_keyword = any(
-                token in destination_keywords for token in query_tokens
-            )
+            query_tokens = {token for token in query_lower.replace(",", " ").split() if token}
+            query_has_keyword = any(token in destination_keywords for token in query_tokens)
 
             def classify(types: list[str]) -> str:
                 if "locality" in types:
@@ -522,12 +506,8 @@ class PlacesService:
                 main_lower = main_text.lower()
                 desc_lower = description.lower()
                 classification = classify(types)
-                contains_keyword = contains_destination_term(
-                    description + " " + main_text
-                )
-                has_low_level_marker = any(
-                    marker in desc_lower for marker in low_level_markers
-                )
+                contains_keyword = contains_destination_term(description + " " + main_text)
+                has_low_level_marker = any(marker in desc_lower for marker in low_level_markers)
 
                 if classification == "other":
                     continue
@@ -544,9 +524,7 @@ class PlacesService:
                     ) and not has_low_level_marker
                 elif classification == "subregion":
                     allow = (
-                        query_has_keyword
-                        or contains_keyword
-                        or query_lower == main_lower
+                        query_has_keyword or contains_keyword or query_lower == main_lower
                     ) and not has_low_level_marker
 
                 if not allow:
@@ -603,9 +581,7 @@ class PlacesService:
             ]
             scored_preds.sort(key=lambda item: item[0], reverse=True)
 
-            filtered_preds = [p for score, p in scored_preds if score >= -5.0][
-                : limit * 2
-            ]
+            filtered_preds = [p for score, p in scored_preds if score >= -5.0][: limit * 2]
 
             seen_names = set()
             final_preds = []
@@ -647,15 +623,11 @@ class PlacesService:
                     add_part(main_text)
 
                 if secondary_text:
-                    segments = [
-                        seg.strip() for seg in secondary_text.split(",") if seg.strip()
-                    ]
+                    segments = [seg.strip() for seg in secondary_text.split(",") if seg.strip()]
                     if segments:
                         add_part(segments[-1])
                 elif description:
-                    segments = [
-                        seg.strip() for seg in description.split(",") if seg.strip()
-                    ]
+                    segments = [seg.strip() for seg in description.split(",") if seg.strip()]
                     if len(segments) >= 2:
                         add_part(segments[-1])
 
@@ -690,9 +662,7 @@ class PlacesService:
         extracted_queries: list[str] | None = None,
         extracted_place_types: list[str] | None = None,
         pace_style: int = 50,  # Added for compatibility (not used in legacy)
-        rank_preference: (
-            str | None
-        ) = None,  # Added for compatibility (not used in legacy)
+        rank_preference: str | None = None,  # Added for compatibility (not used in legacy)
         max_pages: int | None = None,  # Added for compatibility
         place_id: str | None = None,  # Google Place ID (more reliable than geocoding)
     ) -> list[dict[str, Any]]:
@@ -757,9 +727,7 @@ class PlacesService:
             for query in extracted_queries:
                 if query and query.strip():
                     all_queries.append(query.strip())
-            print(
-                f"[PlacesService] Added {len(extracted_queries)} extracted queries to search"
-            )
+            print(f"[PlacesService] Added {len(extracted_queries)} extracted queries to search")
 
         # Always include broader categories upfront (not as fallback)
         all_queries.extend(

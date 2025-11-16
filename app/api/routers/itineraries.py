@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
+
 from app.core.clerk_security import get_current_user_from_clerk
 from app.core.cover_image_service import cover_image_service
 from app.core.destination_profiling_service import destination_profiling_service
@@ -19,7 +21,6 @@ from app.core.schemas import (
     User,
 )
 from app.core.semantic_category_service import semantic_category_service
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 
 logger = logging.getLogger(__name__)
 
@@ -93,10 +94,7 @@ def _optimize_day_times(
 
     # Step 2: Sort by parsed time (chronological order)
     activities_with_time.sort(key=lambda x: x[1])
-    print(
-        f"[TimeOptimize] Sorted {len(activities_with_time)} activities "
-        f"chronologically"
-    )
+    print(f"[TimeOptimize] Sorted {len(activities_with_time)} activities " f"chronologically")
 
     # Step 3: Validate and adjust times based on travel constraints
     day_name = day.date.split(",")[0].strip()  # Extract day name (e.g., "Monday")
@@ -110,9 +108,7 @@ def _optimize_day_times(
 
             # Get venue data for duration and travel time
             prev_venue_data = get_venue_data(prev_act.place_id)
-            prev_venue_types = (
-                prev_venue_data.get("types", []) if prev_venue_data else []
-            )
+            prev_venue_types = prev_venue_data.get("types", []) if prev_venue_data else []
 
             # Calculate required start time
             prev_duration = estimate_activity_duration(prev_venue_types, pace_style)
@@ -255,16 +251,11 @@ def _pass_b(
 
     # Handle edge case: empty preference text
     if not user_preference or not user_preference.strip():
-        print(
-            "[Pass B] WARNING: Empty preference text! "
-            "Using fallback default preferences."
-        )
+        print("[Pass B] WARNING: Empty preference text! " "Using fallback default preferences.")
         user_preference = "tourist attractions, popular places, things to do"
 
     # Get destination profile (available categories)
-    destination_profile = destination_profiling_service.get_destination_profile(
-        destination
-    )
+    destination_profile = destination_profiling_service.get_destination_profile(destination)
     print(
         f"[Pass B] Destination profile has "
         f"{len(destination_profile)} categories: "
@@ -335,9 +326,7 @@ def _pass_b(
 
             # Stop if we have enough
             if len(new_venues) >= pass_b_max:
-                print(
-                    f"[Pass B] Reached target ({pass_b_max} venues), " "stopping search"
-                )
+                print(f"[Pass B] Reached target ({pass_b_max} venues), " "stopping search")
                 break
         except Exception as e:
             print(f"[Pass B] ERROR searching '{category}': {e}")
@@ -464,9 +453,7 @@ def _parse_itinerary_json_or_502(raw_text: str) -> ItineraryDocument:
 # New deterministic generator (no LLM selection)
 # ----------------------------------------------
 @router.post("/generate2", response_model=dict[str, Any])
-def generate_itinerary_v2(
-    payload: ItineraryGenerateRequest, request: Request
-) -> dict[str, Any]:
+def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -> dict[str, Any]:
     """
     Deterministic itinerary generation using weighted scoring over Google Places
     results plus user/group preferences. No LLM is used for venue selection.
@@ -483,9 +470,7 @@ def generate_itinerary_v2(
     trip_name = payload.trip_name
     traveler_name = payload.traveler_name
     destination = payload.destination
-    destination_place_id = (
-        payload.destination_place_id
-    )  # Google Place ID from autocomplete
+    destination_place_id = payload.destination_place_id  # Google Place ID from autocomplete
     dates = payload.dates
     duration = payload.duration or ""
     clerk_user_id = payload.clerk_user_id
@@ -534,25 +519,17 @@ def generate_itinerary_v2(
 
     budget_style = aggregated_prefs.get("budget_style", 50) if aggregated_prefs else 50
     pace_style = aggregated_prefs.get("pace_style", 50) if aggregated_prefs else 50
-    schedule_style = (
-        aggregated_prefs.get("schedule_style", 50) if aggregated_prefs else 50
-    )
-    interests = (
-        aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
-    )
+    schedule_style = aggregated_prefs.get("schedule_style", 50) if aggregated_prefs else 50
+    interests = aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
 
-    raw_other_interests = (
-        aggregated_prefs.get("other_interests") if aggregated_prefs else None
-    )
+    raw_other_interests = aggregated_prefs.get("other_interests") if aggregated_prefs else None
     if isinstance(raw_other_interests, list):
         other_interests_texts = [
             str(item).strip() for item in raw_other_interests if str(item).strip()
         ]
     elif isinstance(raw_other_interests, str):
         other_interests_texts = [
-            part.strip()
-            for part in re.split(r"[,\n]", raw_other_interests)
-            if part.strip()
+            part.strip() for part in re.split(r"[,\n]", raw_other_interests) if part.strip()
         ]
     else:
         other_interests_texts = []
@@ -594,9 +571,7 @@ def generate_itinerary_v2(
         )
 
         # Merge with other_interests extraction
-        extracted_from_other["search_queries"].extend(
-            extracted_from_vibe["search_queries"]
-        )
+        extracted_from_other["search_queries"].extend(extracted_from_vibe["search_queries"])
         extracted_from_other["place_types"].extend(extracted_from_vibe["place_types"])
         extracted_from_other["keywords"].extend(extracted_from_vibe["keywords"])
 
@@ -629,9 +604,7 @@ def generate_itinerary_v2(
             },
         )
 
-        extracted_from_other["search_queries"].extend(
-            extracted_group_vibe["search_queries"]
-        )
+        extracted_from_other["search_queries"].extend(extracted_group_vibe["search_queries"])
         extracted_from_other["place_types"].extend(extracted_group_vibe["place_types"])
         extracted_from_other["keywords"].extend(extracted_group_vibe["keywords"])
 
@@ -740,9 +713,7 @@ def generate_itinerary_v2(
     )
 
     # --- PASS A: STRICT SEARCH (interests + extracted queries + photos) ---
-    print(
-        "[Pass A] Searching with interests + extracted queries + photo requirement..."
-    )
+    print("[Pass A] Searching with interests + extracted queries + photo requirement...")
 
     # Merge interests with extracted search queries
     all_search_queries = interests.copy()
@@ -759,12 +730,8 @@ def generate_itinerary_v2(
         max_results=max_results,
         require_photo=True,
         pace_style=pace_style,
-        extracted_queries=extracted_from_other[
-            "search_queries"
-        ],  # NEW: Pass extracted queries
-        extracted_place_types=extracted_from_other[
-            "place_types"
-        ],  # NEW: Pass extracted types
+        extracted_queries=extracted_from_other["search_queries"],  # NEW: Pass extracted queries
+        extracted_place_types=extracted_from_other["place_types"],  # NEW: Pass extracted types
         place_id=destination_place_id,  # Use place_id if available
         max_pages=3,  # Increased from default 1 to fetch 3x more results
     )
@@ -881,9 +848,7 @@ def generate_itinerary_v2(
         # Check 3: Distance validation (if coordinates available)
         distance_valid = True
         if destination_lat and destination_lng and venue_lat and venue_lng:
-            distance = haversine_distance(
-                destination_lat, destination_lng, venue_lat, venue_lng
-            )
+            distance = haversine_distance(destination_lat, destination_lng, venue_lat, venue_lng)
             if distance > max_distance_km:
                 distance_valid = False
 
@@ -1022,9 +987,7 @@ def generate_itinerary_v2(
 
         # Boost from extracted keywords (from other_interests/vibe_notes)
         if extracted_keywords:
-            keyword_matches = sum(
-                1 for kw in extracted_keywords if kw.lower() in venue_text
-            )
+            keyword_matches = sum(1 for kw in extracted_keywords if kw.lower() in venue_text)
             keyword_score = min(0.3, keyword_matches / len(extracted_keywords) * 0.3)
             score += keyword_score
 
@@ -1073,11 +1036,7 @@ def generate_itinerary_v2(
         Boost venues that match extracted keywords or notes_text.
         No hardcoded generic terms to avoid boosting venues globally.
         """
-        text = (
-            (v.get("name") or "")
-            + " "
-            + ((v.get("types") and " ".join(v.get("types"))) or "")
-        )
+        text = (v.get("name") or "") + " " + ((v.get("types") and " ".join(v.get("types"))) or "")
         text = text.lower()
 
         # Reduced boost weight since we now have interest_match_score
@@ -1086,9 +1045,7 @@ def generate_itinerary_v2(
         # Only check extracted keywords and notes_text (user-provided)
         boost_terms_to_check = []
         if all_extracted_keywords:
-            boost_terms_to_check.extend(
-                [k.lower() for k in all_extracted_keywords[:10]]
-            )
+            boost_terms_to_check.extend([k.lower() for k in all_extracted_keywords[:10]])
         if notes_text:
             boost_terms_to_check.extend(notes_text.split())
 
@@ -1113,9 +1070,7 @@ def generate_itinerary_v2(
             )
             print(f"[InterestMatch] Batch semantic matching completed")
         else:
-            print(
-                "[InterestMatch] Semantic matching not available, using keyword matching only"
-            )
+            print("[InterestMatch] Semantic matching not available, using keyword matching only")
     except Exception as e:
         print(f"[InterestMatch] Semantic matching failed: {e}")
         print("[InterestMatch] Falling back to keyword matching only")
@@ -1172,9 +1127,7 @@ def generate_itinerary_v2(
 
     # Second pass: relax diversity cap if we're short
     if len(chosen) < total_needed:
-        print(
-            f"[Diversity] Relaxing cap to fill remaining slots ({len(chosen)}/{total_needed})"
-        )
+        print(f"[Diversity] Relaxing cap to fill remaining slots ({len(chosen)}/{total_needed})")
         relaxed_cap = diversity_cap + 2  # Allow +2 more per type
         for item in scored:
             v = item["venue"]
@@ -1265,15 +1218,10 @@ def generate_itinerary_v2(
 
         for v in day_venues:
             # assign simple timeslots (will be refined by LLM)
-            slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][
-                len(activities) % 5
-            ]
+            slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][len(activities) % 5]
             img = None
             if v.get("photo_reference"):
-                url = (
-                    places_service.get_proxy_photo_url(v["photo_reference"], base_url)
-                    or None
-                )
+                url = places_service.get_proxy_photo_url(v["photo_reference"], base_url) or None
                 img = url  # Use string directly (can be relative or absolute)
             activities.append(
                 Activity(
@@ -1334,13 +1282,13 @@ def generate_itinerary_v2(
                         venue_distance_to_next = act.distance_to_next
 
                 # Build context string with opening hours
-                context_str = f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
+                context_str = (
+                    f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
+                )
 
                 if venue_hours:
                     # Extract hours for the current day
-                    day_name = day.date.split(",")[
-                        0
-                    ]  # e.g., "Monday" from "Monday, January 1"
+                    day_name = day.date.split(",")[0]  # e.g., "Monday" from "Monday, January 1"
                     relevant_hours = [h for h in venue_hours if day_name in h]
                     if relevant_hours:
                         context_str += f" | Hours: {relevant_hours[0]}"
@@ -1349,7 +1297,9 @@ def generate_itinerary_v2(
                     from app.core.travel_time_utils import estimate_travel_time
 
                     travel_mins = estimate_travel_time(venue_distance_to_next)
-                    context_str += f" | {venue_distance_to_next}km to next ({travel_mins}min travel)"
+                    context_str += (
+                        f" | {venue_distance_to_next}km to next ({travel_mins}min travel)"
+                    )
 
                 activity_context.append(context_str)
 
@@ -1387,13 +1337,10 @@ def generate_itinerary_v2(
 
             timing_user = {
                 "role": "user",
-                "content": f"Day {day_idx+1} activities:\n"
-                + "\n".join(activity_context),
+                "content": f"Day {day_idx+1} activities:\n" + "\n".join(activity_context),
             }
 
-            timing_response = provider.chat(
-                messages=[timing_prompt, timing_user], temperature=0.3
-            )
+            timing_response = provider.chat(messages=[timing_prompt, timing_user], temperature=0.3)
 
             # Parse timing response
             print(f"[Timing Debug] Raw LLM response: {timing_response[:300]}")
@@ -1407,9 +1354,7 @@ def generate_itinerary_v2(
             # Remove markdown code fences
             if timing_text.startswith("```"):
                 lines = timing_text.split("\n")
-                timing_text = "\n".join(
-                    [line for line in lines if not line.startswith("```")]
-                )
+                timing_text = "\n".join([line for line in lines if not line.startswith("```")])
 
             # Try to extract JSON array from text
             # Look for [...] pattern
@@ -1467,9 +1412,7 @@ def generate_itinerary_v2(
                                         time_str = adjusted_time
                                 else:
                                     # No opening hours data - use type-based defaults
-                                    default_hours = get_default_hours_by_type(
-                                        v.get("types", [])
-                                    )
+                                    default_hours = get_default_hours_by_type(v.get("types", []))
                                     is_open, reason = is_venue_open_at_time(
                                         default_hours, day_name, time_str
                                     )
@@ -1526,9 +1469,7 @@ def generate_itinerary_v2(
                                         time_str, parsed_hours, day_name
                                     )
                                 else:
-                                    default_hours = get_default_hours_by_type(
-                                        v.get("types", [])
-                                    )
+                                    default_hours = get_default_hours_by_type(v.get("types", []))
                                     time_str = adjust_time_to_opening_hours(
                                         time_str, default_hours, day_name
                                     )
@@ -1572,9 +1513,7 @@ def generate_itinerary_v2(
                                     time_str, parsed_hours, day_name
                                 )
                             else:
-                                default_hours = get_default_hours_by_type(
-                                    v.get("types", [])
-                                )
+                                default_hours = get_default_hours_by_type(v.get("types", []))
                                 time_str = adjust_time_to_opening_hours(
                                     time_str, default_hours, day_name
                                 )
@@ -1586,9 +1525,7 @@ def generate_itinerary_v2(
             _optimize_day_times(day, chosen, opening_hours_cache, pace_style)
 
     # Calculate distances and validate timing with travel time
-    print(
-        "[Distance] Calculating distances and validating travel time between activities..."
-    )
+    print("[Distance] Calculating distances and validating travel time between activities...")
     from app.core.travel_time_utils import (
         add_minutes_to_time,
         estimate_activity_duration,
@@ -1633,9 +1570,7 @@ def generate_itinerary_v2(
 
                 # Validate timing: check if there's enough time between activities
                 travel_mins = estimate_travel_time(distance_km)
-                activity_duration = estimate_activity_duration(
-                    current_venue_types, pace_style
-                )
+                activity_duration = estimate_activity_duration(current_venue_types, pace_style)
 
                 # Calculate expected end time of current activity
                 expected_next_start = add_minutes_to_time(
@@ -1686,9 +1621,7 @@ def generate_itinerary_v2(
 
         notes_user = {"role": "user", "content": notes_context}
 
-        notes_response = provider.chat(
-            messages=[notes_prompt, notes_user], temperature=0.7
-        )
+        notes_response = provider.chat(messages=[notes_prompt, notes_user], temperature=0.7)
 
         # Parse the JSON response
         # Try to extract JSON array from response
@@ -1697,9 +1630,7 @@ def generate_itinerary_v2(
         if notes_text.startswith("```"):
             # Remove markdown code fences
             lines = notes_text.split("\n")
-            notes_text = "\n".join(
-                [line for line in lines if not line.startswith("```")]
-            )
+            notes_text = "\n".join([line for line in lines if not line.startswith("```")])
 
         trip_notes = json.loads(notes_text)
 
@@ -1757,9 +1688,7 @@ def generate_itinerary_v2(
                         fn = p.get("first_name") or ""
                         ln = p.get("last_name") or ""
                         if fn or ln:
-                            group_participants.append(
-                                GroupParticipant(first_name=fn, last_name=ln)
-                            )
+                            group_participants.append(GroupParticipant(first_name=fn, last_name=ln))
                     doc.group = GroupInfo(
                         invite_id=invite_id,
                         participants=group_participants,
@@ -1777,9 +1706,7 @@ def generate_itinerary_v2(
                     fn = p.first_name.strip()
                     ln = p.last_name.strip()
                     if fn or ln:
-                        group_participants.append(
-                            GroupParticipant(first_name=fn, last_name=ln)
-                        )
+                        group_participants.append(GroupParticipant(first_name=fn, last_name=ln))
                 if group_participants:
                     doc.group = GroupInfo(
                         invite_id=None,
@@ -1829,9 +1756,7 @@ def generate_itinerary_v2(
                 trip_dates = doc.dates
 
                 # Extract first name
-                first_name = (
-                    user.first_name or user.email.split("@")[0].split(".")[0].title()
-                )
+                first_name = user.first_name or user.email.split("@")[0].split(".")[0].title()
 
                 # Send email
                 email_service.send_first_itinerary_email(
@@ -1863,9 +1788,7 @@ def generate_itinerary_v2(
         try:
             success = repo.update_invite_itinerary_id(invite_id, itn_id)
             if not success:
-                print(
-                    f"Warning: Failed to update invite {invite_id} with itinerary_id {itn_id}"
-                )
+                print(f"Warning: Failed to update invite {invite_id} with itinerary_id {itn_id}")
         except Exception as e:
             print(f"Error updating invite with itinerary_id: {e}")
             # Non-fatal: continue even if invite update fails
@@ -1935,9 +1858,7 @@ async def delete_itinerary(
 ):
     """Delete an itinerary by ID and cascade delete linked invites."""
     # Find all invites linked to this itinerary
-    linked_invites = list(
-        repo.trip_invites_collection.find({"itinerary_id": itinerary_id})
-    )
+    linked_invites = list(repo.trip_invites_collection.find({"itinerary_id": itinerary_id}))
 
     # Delete all linked invites
     if linked_invites:
@@ -1971,23 +1892,17 @@ async def get_itinerary_invite(
 
     # Verify ownership
     if itinerary.get("clerk_user_id") != clerk_user_id:
-        raise HTTPException(
-            status_code=403, detail="Only the itinerary owner can access this"
-        )
+        raise HTTPException(status_code=403, detail="Only the itinerary owner can access this")
 
     # Find invite linked to this itinerary
     invite = repo.trip_invites_collection.find_one({"itinerary_id": itinerary_id})
     if not invite:
-        raise HTTPException(
-            status_code=404, detail="No invite found for this itinerary"
-        )
+        raise HTTPException(status_code=404, detail="No invite found for this itinerary")
 
     invite.pop("_id", None)  # Remove MongoDB ObjectId
 
     # Filter out organizer from participants
-    participants = [
-        p for p in invite.get("participants", []) if not p.get("is_organizer")
-    ]
+    participants = [p for p in invite.get("participants", []) if not p.get("is_organizer")]
 
     # Return all non-organizer participants (with or without emails)
     invite["participants"] = participants
@@ -2053,9 +1968,7 @@ async def update_itinerary_participants(
     document["group"] = group_info
 
     # Update itinerary in database
-    repo.itineraries_collection.update_one(
-        {"id": itinerary_id}, {"$set": {"document": document}}
-    )
+    repo.itineraries_collection.update_one({"id": itinerary_id}, {"$set": {"document": document}})
 
     updated_itinerary = repo.get_itinerary(itinerary_id)
     return updated_itinerary
@@ -2087,9 +2000,7 @@ async def share_itinerary(
 
     # Verify ownership
     if itinerary.get("clerk_user_id") != clerk_user_id:
-        raise HTTPException(
-            status_code=403, detail="Only the itinerary owner can share it"
-        )
+        raise HTTPException(status_code=403, detail="Only the itinerary owner can share it")
 
     # Get user info
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -2111,9 +2022,7 @@ async def share_itinerary(
     date_range_end = date_parts[1].strip() if len(date_parts) > 1 else None
 
     # Get or create invite linked to this itinerary
-    existing_invite = repo.trip_invites_collection.find_one(
-        {"itinerary_id": itinerary_id}
-    )
+    existing_invite = repo.trip_invites_collection.find_one({"itinerary_id": itinerary_id})
 
     if existing_invite:
         existing_invite.pop("_id", None)  # Remove MongoDB ObjectId
@@ -2133,9 +2042,7 @@ async def share_itinerary(
 
         # Update existing invite with new participants
         participant_emails = share_data.participants
-        organizer_name = share_data.get(
-            "organizer_name", user.first_name or "Trip Organizer"
-        )
+        organizer_name = share_data.get("organizer_name", user.first_name or "Trip Organizer")
 
         # Update participants in the invite
         participants = existing_invite.get("participants", [])
@@ -2153,16 +2060,8 @@ async def share_itinerary(
                 repo.add_participant(
                     invite_id=invite_id,
                     email=email,
-                    first_name=(
-                        participant_info.get("first_name", "")
-                        if participant_info
-                        else ""
-                    ),
-                    last_name=(
-                        participant_info.get("last_name", "")
-                        if participant_info
-                        else ""
-                    ),
+                    first_name=(participant_info.get("first_name", "") if participant_info else ""),
+                    last_name=(participant_info.get("last_name", "") if participant_info else ""),
                 )
 
         # Send emails to selected participants
@@ -2174,11 +2073,7 @@ async def share_itinerary(
                 # Find participant to get first_name
                 updated_invite = repo.get_trip_invite(invite_id)
                 participant = next(
-                    (
-                        p
-                        for p in updated_invite.get("participants", [])
-                        if p.get("email") == email
-                    ),
+                    (p for p in updated_invite.get("participants", []) if p.get("email") == email),
                     None,
                 )
                 recipient_first_name = (
@@ -2190,9 +2085,7 @@ async def share_itinerary(
                     invite_id=invite_id,
                     organizer_name=organizer_name,
                     trip_name=trip_name,
-                    recipient_first_name=(
-                        recipient_first_name if recipient_first_name else None
-                    ),
+                    recipient_first_name=(recipient_first_name if recipient_first_name else None),
                 )
                 sent_count += 1
             except Exception as e:
@@ -2215,8 +2108,7 @@ async def share_itinerary(
         invite_doc = repo.create_trip_invite(
             organizer_clerk_id=clerk_user_id,
             organizer_email=user.email,
-            organizer_name=f"{user.first_name or ''} {user.last_name or ''}".strip()
-            or None,
+            organizer_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or None,
             trip_name=trip_name,
             destination=destination,
             date_range_start=date_range_start,
@@ -2232,9 +2124,7 @@ async def share_itinerary(
 
         # Add participants
         participant_emails = share_data.participants
-        organizer_name = share_data.get(
-            "organizer_name", user.first_name or "Trip Organizer"
-        )
+        organizer_name = share_data.get("organizer_name", user.first_name or "Trip Organizer")
 
         group_participants = document.get("group", {}).get("participants", [])
         for email in participant_emails:
@@ -2245,12 +2135,8 @@ async def share_itinerary(
             repo.add_participant(
                 invite_id=invite_id,
                 email=email,
-                first_name=(
-                    participant_info.get("first_name", "") if participant_info else ""
-                ),
-                last_name=(
-                    participant_info.get("last_name", "") if participant_info else ""
-                ),
+                first_name=(participant_info.get("first_name", "") if participant_info else ""),
+                last_name=(participant_info.get("last_name", "") if participant_info else ""),
             )
 
         # Send emails
@@ -2277,9 +2163,7 @@ async def share_itinerary(
                     invite_id=invite_id,
                     organizer_name=organizer_name,
                     trip_name=trip_name,
-                    recipient_first_name=(
-                        recipient_first_name if recipient_first_name else None
-                    ),
+                    recipient_first_name=(recipient_first_name if recipient_first_name else None),
                 )
                 sent_count += 1
             except Exception as e:

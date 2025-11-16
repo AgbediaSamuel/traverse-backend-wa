@@ -39,7 +39,7 @@ class CSRFProtectionMiddleware(BaseHTTPMiddleware):
         # Skip CSRF check for webhook routes (Clerk sends webhooks from different origin)
         if request.url.path.startswith("/webhooks/"):
             return await call_next(request)
-        
+
         # Only check state-changing methods
         if request.method not in STATE_CHANGING_METHODS:
             return await call_next(request)
