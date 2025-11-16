@@ -146,6 +146,23 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const itineraryId = params.get('itineraryId');
+    const token = params.get('token');
+    
+    // Security: Validate referer or token
+    const referer = document.referrer;
+    const allowedDomain = import.meta.env.VITE_ALLOWED_REFERER || 'traverse-hq.com';
+    const expectedToken = import.meta.env.VITE_TEMPLATE_SECRET || '';
+    
+    // Must have valid referer OR valid token (if secret is configured)
+    const hasValidReferer = referer && referer.includes(allowedDomain);
+    const hasValidToken = expectedToken ? (token === expectedToken) : true; // If no secret configured, allow without token
+    
+    if (expectedToken && !hasValidReferer && !hasValidToken) {
+      setError('Unauthorized: This itinerary can only be accessed through the Traverse app.');
+      setLoading(false);
+      return;
+    }
+    
     if (!itineraryId) {
       // No itineraryId: use default data for demo/testing
       setData(defaultItineraryData);
