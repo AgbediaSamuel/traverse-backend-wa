@@ -160,7 +160,7 @@ class EmailService:
             """
 
             params = {
-                "from": f"Traverse <{self.sender_email}>",
+                "from": "Traverse <app@traverse-hq.com>",
                 "to": [recipient_email],
                 "subject": f"🗺️ Your itinerary for {destination} is ready!",
                 "html": html_content,
@@ -337,7 +337,7 @@ class EmailService:
             """
 
             params = {
-                "from": f"Traverse <{self.sender_email}>",
+                "from": "Traverse <app@traverse-hq.com>",
                 "to": [recipient_email],
                 "subject": f"Your {destination} itinerary is ready",
                 "html": html_content,
@@ -424,7 +424,7 @@ class EmailService:
             """
 
             params = {
-                "from": f"Traverse <{self.sender_email}>",
+                "from": "Traverse <app@traverse-hq.com>",
                 "to": [organizer_email],
                 "subject": f"Your group's ready — time to finalize your {destination} trip",
                 "html": html_content,
