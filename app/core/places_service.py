@@ -367,18 +367,14 @@ class PlacesService:
         if not photo_reference:
             return None
 
-        # Always use relative path /api/places/photo when behind nginx proxy
-        # This works correctly when proxied through ngrok
-        if not base_url:
-            return f"/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
-
-        # If base_url is provided, ensure it includes /api prefix
-        base = base_url.rstrip("/")
-        # Check if base_url already includes /api, if not add it
-        if not base.endswith("/api"):
-            return f"{base}/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
-        else:
+        # When base_url is provided (production/Render), use /places/photo (no /api prefix)
+        # When base_url is empty (local nginx proxy), use /api/places/photo
+        if base_url:
+            base = base_url.rstrip("/")
             return f"{base}/places/photo?ref={quote(photo_reference)}&w={max_width}"
+        else:
+            # Local development with nginx proxy adds /api prefix
+            return f"/api/places/photo?ref={quote(photo_reference)}&w={max_width}"
 
     def autocomplete_places(self, query: str, limit: int = 6) -> list[dict[str, Any]]:
         """Return lightweight autocomplete suggestions for destinations.
