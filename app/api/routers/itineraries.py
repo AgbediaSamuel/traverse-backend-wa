@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -481,10 +482,10 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
     vibe_notes = payload.vibe_notes or ""  # Optional context for generation
 
     # For proxy photo URLs, we need to determine the base URL
-    # When behind nginx proxy, request.base_url will be the proxy URL (e.g., http://localhost:8080/)
-    # We want to return relative paths that work through the proxy
-    # So we'll pass an empty string to get_proxy_photo_url, and it will return relative paths
-    base_url = ""
+    # In production (Render), use BACKEND_URL to generate absolute URLs for the template
+    # In local development (nginx proxy), use empty string for relative paths
+    backend_url = os.getenv("BACKEND_URL", "").rstrip("/")
+    base_url = backend_url if backend_url else ""
 
     # Parse dates → list of day strings (dates already validated by schema)
     # But we still need to parse them for use in the function
