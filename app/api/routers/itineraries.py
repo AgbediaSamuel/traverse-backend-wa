@@ -1746,8 +1746,6 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
 
             # Check if user hasn't received first itinerary email yet
             if not user.first_itinerary_email_sent:
-                import os
-
                 from app.core.email_service import email_service
 
                 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
