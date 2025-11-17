@@ -383,7 +383,6 @@ class EmailService:
                 </head>
                 <body style="margin: 0; padding: 0; font-family: 'Montserrat', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #ffffff;">
                     <div style="max-width: 600px; margin: 0 auto; padding: 30px 20px;">
-                        {self._get_logo_html()}
                         <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">Hi {organizer_first_name},</p>
                         
                         <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
