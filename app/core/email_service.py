@@ -440,6 +440,90 @@ class EmailService:
             )
             return False
 
+    def send_itinerary_ready_email(
+        self,
+        recipient_email: str,
+        recipient_first_name: str,
+        organizer_name: str,
+        destination: str,
+        trip_name: str,
+        trip_dates: str,
+        group_size: int,
+        itinerary_link: str,
+    ) -> bool:
+        """
+        Send email to invitees when itinerary is ready.
+
+        Args:
+            recipient_email: Email address of the invitee
+            recipient_first_name: First name of the invitee
+            organizer_name: Name of the trip organizer
+            destination: Trip destination
+            trip_name: Name of the trip
+            trip_dates: Formatted trip dates
+            group_size: Number of travelers (including organizer)
+            itinerary_link: Link to view the itinerary
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        try:
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Montserrat', Arial, sans-serif; line-height: 1.6; color: #333; background-color: #ffffff;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 30px 20px;">
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">Hi {recipient_first_name},</p>
+                        
+                        <p style="font-size: 16px; color: #333; margin: 0 0 20px 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            Your group's itinerary for <strong style="font-weight: 600;">{destination}</strong> is here — packed with restaurants, activities, and hidden gems built around your preferences.
+                        </p>
+                        
+                        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>📅 Trip:</strong> {trip_name}</p>
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>🗓️ Dates:</strong> {trip_dates}</p>
+                            <p style="margin: 10px 0; font-size: 16px;"><strong>👥 Group:</strong> {group_size} travelers</p>
+                        </div>
+
+                        <div style="margin: 32px 0; text-align: center;">
+                            <a href="{itinerary_link}" style="background-color: #a1f800; color: #000000; padding: 14px 32px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; display: inline-block; border: 2px solid rgba(0, 0, 0, 0.1); font-family: 'Montserrat', Arial, sans-serif; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);">
+                                View Itinerary →
+                            </a>
+                        </div>
+
+                        <p style="font-size: 16px; color: #333; margin: 32px 0 0 0; font-family: 'Montserrat', Arial, sans-serif;">
+                            — Team Traverse
+                        </p>
+
+                        <hr style="border: none; border-top: 1px solid #eeeeee; margin: 40px 0 20px 0;">
+                        
+                        <p style="color: #999999; font-size: 12px; text-align: center; margin: 0; line-height: 1.5; font-family: 'Montserrat', Arial, sans-serif;">
+                            This email was sent from an unmonitored address. Please do not reply to this email.<br>
+                            If you have questions, please contact {organizer_name} directly or visit Traverse.
+                        </p>
+                    </div>
+                </body>
+            </html>
+            """
+
+            params = {
+                "from": "Traverse <app@traverse-hq.com>",
+                "to": [recipient_email],
+                "subject": f"Your {destination} itinerary is ready",
+                "html": html_content,
+            }
+
+            response = resend.Emails.send(params)
+            logger.info(f"Sent itinerary ready email to {recipient_email}: {response}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error sending itinerary ready email to {recipient_email}: {e}")
+            return False
+
 
 # Singleton instance
 email_service = EmailService()
