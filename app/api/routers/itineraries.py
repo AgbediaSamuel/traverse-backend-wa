@@ -53,10 +53,7 @@ def _optimize_day_times(
         parse_opening_hours,
         parse_time_to_minutes,
     )
-    from app.core.travel_time_utils import (
-        estimate_activity_duration,
-        estimate_travel_time,
-    )
+    from app.core.travel_time_utils import estimate_activity_duration, estimate_travel_time
 
     # Helper to convert minutes back to time string
     def minutes_to_time_string(minutes: int) -> str:
@@ -461,10 +458,7 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
 
     All input is validated using Pydantic schemas for security and data integrity.
     """
-    from app.core.itinerary_planner import (
-        calculate_daily_activities,
-        get_budget_price_levels,
-    )
+    from app.core.itinerary_planner import calculate_daily_activities, get_budget_price_levels
     from app.core.preference_aggregator import aggregate_preferences
 
     # Extract validated data from schema
@@ -1788,6 +1782,58 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
             success = repo.update_invite_itinerary_id(invite_id, itn_id)
             if not success:
                 print(f"Warning: Failed to update invite {invite_id} with itinerary_id {itn_id}")
+
+            # Send emails to all invitees with emails
+            try:
+                invite = repo.get_trip_invite(invite_id)
+                if invite:
+                    from app.core.email_service import email_service
+
+                    # Get user for organizer name (already fetched above for first itinerary email)
+                    user_doc = repo.users_collection.find_one({"clerk_user_id": clerk_user_id})
+                    organizer_name = "Trip Organizer"
+                    if user_doc:
+                        organizer_name = (
+                            f"{user_doc.get('first_name', '')} {user_doc.get('last_name', '')}".strip()
+                            or user_doc.get("email", "").split("@")[0].split(".")[0].title()
+                            or "Trip Organizer"
+                        )
+
+                    # Build itinerary link
+                    template_url = os.getenv("ITINERARY_TEMPLATE_URL", "")
+                    if not template_url:
+                        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
+                        template_url = f"{frontend_url}/template"
+                    template_secret = os.getenv("ITINERARY_TEMPLATE_SECRET", "")
+                    token_param = f"&token={template_secret}" if template_secret else ""
+                    itinerary_link = f"{template_url}/?itineraryId={itn_id}{token_param}"
+
+                    participants = invite.get("participants", [])
+                    group_size = len(participants)
+
+                    # Send to all participants with emails (excluding organizer)
+                    for participant in participants:
+                        if participant.get("email") and not participant.get("is_organizer"):
+                            recipient_email = participant["email"]
+                            recipient_first_name = (
+                                participant.get("first_name")
+                                or recipient_email.split("@")[0].split(".")[0].title()
+                            )
+
+                            email_service.send_itinerary_ready_email(
+                                recipient_email=recipient_email,
+                                recipient_first_name=recipient_first_name,
+                                organizer_name=organizer_name,
+                                destination=destination,
+                                trip_name=trip_name,
+                                trip_dates=doc.dates,
+                                group_size=group_size,
+                                itinerary_link=itinerary_link,
+                            )
+                            print(f"[Email] Sent itinerary ready email to {recipient_email}")
+            except Exception as e:
+                print(f"[Email] Error sending itinerary ready emails: {e}")
+                # Non-fatal: continue even if emails fail
         except Exception as e:
             print(f"Error updating invite with itinerary_id: {e}")
             # Non-fatal: continue even if invite update fails
