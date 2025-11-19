@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -1722,7 +1723,23 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
         print(f"[CoverImage] Failed to get cover image: {e}")
         # Non-fatal: continue without cover image
 
-    itn_id = repo.save_itinerary(doc, clerk_user_id=clerk_user_id)
+    # Check for duplicate itinerary using fingerprint hash (idempotency)
+    fingerprint_string = f"{clerk_user_id}|{destination.lower().strip()}|{dates}|{trip_name.lower().strip()}|{trip_type}|{invite_id or ''}"
+    fingerprint = hashlib.sha256(fingerprint_string.encode()).hexdigest()
+
+    existing_itinerary = repo.find_itinerary_by_fingerprint(fingerprint)
+    if existing_itinerary:
+        print(
+            f"[Idempotency] Duplicate itinerary detected (fingerprint: {fingerprint[:16]}...), returning existing itinerary"
+        )
+        itn_id = existing_itinerary["id"]
+        # Return existing itinerary with warnings if any
+        result = existing_itinerary
+        if warnings:
+            result["warnings"] = warnings
+        return result
+
+    itn_id = repo.save_itinerary(doc, clerk_user_id=clerk_user_id, fingerprint=fingerprint)
 
     # Check if this is the user's first itinerary and send email
     try:
@@ -1799,14 +1816,9 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
                             or "Trip Organizer"
                         )
 
-                    # Build itinerary link
-                    template_url = os.getenv("ITINERARY_TEMPLATE_URL", "")
-                    if not template_url:
-                        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
-                        template_url = f"{frontend_url}/template"
-                    template_secret = os.getenv("ITINERARY_TEMPLATE_SECRET", "")
-                    token_param = f"&token={template_secret}" if template_secret else ""
-                    itinerary_link = f"{template_url}/?itineraryId={itn_id}{token_param}"
+                    # Build itinerary link (public route that handles auth redirect)
+                    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3456")
+                    itinerary_link = f"{frontend_url}/itinerary/{itn_id}"
 
                     participants = invite.get("participants", [])
                     group_size = len(participants)
