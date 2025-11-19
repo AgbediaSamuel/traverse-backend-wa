@@ -70,6 +70,7 @@ class MongoDBRepo:
                 self.users_collection.create_index("email", unique=True)
                 self.cover_images_collection.create_index("destination", unique=True)
                 self.destination_profiles_collection.create_index("destination", unique=True)
+                self.itineraries_collection.create_index("fingerprint")
                 print("Database indexes created")
             except Exception as index_error:
                 print(f"Index creation failed (might already exist): {index_error}")
@@ -89,10 +90,18 @@ class MongoDBRepo:
             print("Will continue without database connection (for development)")
 
     # Itineraries
+    def find_itinerary_by_fingerprint(self, fingerprint: str) -> dict | None:
+        """Find an existing itinerary by its fingerprint hash."""
+        itinerary_doc = self.itineraries_collection.find_one({"fingerprint": fingerprint})
+        if itinerary_doc:
+            itinerary_doc.pop("_id", None)  # Remove MongoDB ObjectId
+        return itinerary_doc
+
     def save_itinerary(
         self,
         doc: ItineraryDocument,
         clerk_user_id: str | None = None,
+        fingerprint: str | None = None,
     ) -> str:
         itn_id = f"itn_{uuid.uuid4().hex[:12]}"
         itinerary_doc = {
@@ -101,6 +110,8 @@ class MongoDBRepo:
             "clerk_user_id": clerk_user_id,
             "created_at": time.time(),
         }
+        if fingerprint:
+            itinerary_doc["fingerprint"] = fingerprint
         self.itineraries_collection.insert_one(itinerary_doc)
         return itn_id
 
