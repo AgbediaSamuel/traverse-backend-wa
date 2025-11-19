@@ -131,13 +131,18 @@ async def handle_clerk_webhook(request: Request):
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing webhook signature"
         )
 
-    # TEMPORARY: Skip signature verification for testing
-    print("TEMPORARILY SKIPPING SIGNATURE VERIFICATION FOR TESTING")
-    # if not verify_webhook_signature(body, signature, CLERK_WEBHOOK_SIGNING_SECRET, msg_id, timestamp):
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Invalid webhook signature"
-    #     )
+    # Verify webhook signature
+    if not CLERK_WEBHOOK_SIGNING_SECRET:
+        print("WARNING: CLERK_WEBHOOK_SIGNING_SECRET not set, skipping signature verification")
+    elif not verify_webhook_signature(
+        body, signature, CLERK_WEBHOOK_SIGNING_SECRET, msg_id, timestamp
+    ):
+        print("Webhook signature verification failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature"
+        )
+    else:
+        print("Webhook signature verified successfully")
 
     try:
         # Parse the webhook payload

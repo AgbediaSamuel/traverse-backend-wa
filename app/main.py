@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Load environment variables BEFORE importing app modules
+# This ensures .env file is loaded before any module-level os.getenv() calls
+load_dotenv()
+
 from app.api.routers.auth import router as auth_router
 from app.api.routers.calendar import router as calendar_router
 from app.api.routers.itineraries import router as itineraries_router
@@ -12,8 +16,6 @@ from app.api.routers.webhooks import webhook_router
 from app.core.csrf_middleware import CSRFProtectionMiddleware
 from app.core.repository import repo
 from app.core.settings import get_settings
-
-load_dotenv()
 
 
 def create_app() -> FastAPI:
