@@ -110,6 +110,16 @@ def parse_time_to_minutes(time_str: str) -> int:
         minute = int(match.group(2))
         meridiem = match.group(3).upper()
 
+        # Validate hour range for 12-hour format (must be 1-12)
+        if hour < 1 or hour > 12:
+            print(f"[TimeParse] Invalid hour {hour} in 12-hour format '{time_str}', defaulting to noon")
+            return 12 * 60
+
+        # Validate minute range
+        if minute < 0 or minute > 59:
+            print(f"[TimeParse] Invalid minute {minute} in '{time_str}', defaulting to noon")
+            return 12 * 60
+
         if meridiem == "AM":
             if hour == 12:
                 hour = 0
@@ -126,9 +136,20 @@ def parse_time_to_minutes(time_str: str) -> int:
     if match:
         hour = int(match.group(1))
         minute = int(match.group(2))
+
+        # Validate 24-hour format ranges
+        if hour < 0 or hour > 23:
+            print(f"[TimeParse] Invalid hour {hour} in 24-hour format '{time_str}', defaulting to noon")
+            return 12 * 60
+
+        if minute < 0 or minute > 59:
+            print(f"[TimeParse] Invalid minute {minute} in '{time_str}', defaulting to noon")
+            return 12 * 60
+
         return hour * 60 + minute
 
     # Default to noon if can't parse
+    print(f"[TimeParse] Could not parse time string '{time_str}', defaulting to noon")
     return 12 * 60
 
 
