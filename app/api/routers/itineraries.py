@@ -100,7 +100,11 @@ def _optimize_day_times(
     BUFFER_MINUTES = 15  # Buffer between activities
 
     optimized_activities = []
-    for idx, (act, parsed_time) in enumerate(activities_with_time):
+    for idx, (act, initial_parsed_time) in enumerate(activities_with_time):
+        # Track the final adjusted time (starts with initial time)
+        final_parsed_time = initial_parsed_time
+        final_time_str = act.time
+
         if idx > 0:
             # Check travel time constraint
             prev_act, prev_time = optimized_activities[-1]
@@ -109,7 +113,7 @@ def _optimize_day_times(
             prev_venue_data = get_venue_data(prev_act.place_id)
             prev_venue_types = prev_venue_data.get("types", []) if prev_venue_data else []
 
-            # Calculate required start time
+            # Calculate required start time (previous activity end + travel + buffer)
             prev_duration = estimate_activity_duration(prev_venue_types, pace_style)
             travel_mins = 0
             if prev_act.distance_to_next is not None:
@@ -117,8 +121,9 @@ def _optimize_day_times(
 
             required_start = prev_time + prev_duration + travel_mins + BUFFER_MINUTES
 
-            # Adjust if current activity starts too early
-            if parsed_time < required_start:
+            # Always ensure current activity starts after previous one ends
+            # This prevents duplicate times
+            if final_parsed_time < required_start:
                 proposed_time = required_start
                 proposed_time_str = minutes_to_time_string(proposed_time)
 
@@ -172,23 +177,58 @@ def _optimize_day_times(
                                 )
 
                     # Update parsed time from adjusted string
-                    parsed_time = parse_time_to_minutes(adjusted_time_str)
+                    final_parsed_time = parse_time_to_minutes(adjusted_time_str)
+                    final_time_str = adjusted_time_str
+
+                    # Ensure we didn't move backwards due to opening hours adjustment
+                    # If opening hours moved us earlier than required_start, push forward
+                    if final_parsed_time < required_start:
+                        final_parsed_time = required_start
+                        final_time_str = minutes_to_time_string(required_start)
+                        print(
+                            f"[TimeOptimize] Opening hours adjustment moved '{act.title}' too early, "
+                            f"pushing to {final_time_str} to respect travel constraint"
+                        )
+                else:
+                    # No venue data - use proposed time directly
+                    final_parsed_time = proposed_time
+                    final_time_str = proposed_time_str
 
                 # Apply adjusted time
-                act.time = adjusted_time_str
+                original_time = act.time
+                act.time = final_time_str
                 print(
                     f"[TimeOptimize] Adjusted '{act.title}' from "
-                    f"{minutes_to_time_string(required_start)} to "
-                    f"{adjusted_time_str} for travel constraint"
+                    f"{original_time} to {final_time_str} for travel constraint"
                 )
 
-        optimized_activities.append((act, parsed_time))
+        # Always append with the final adjusted time (not the original)
+        optimized_activities.append((act, final_parsed_time))
 
     # Step 4: Re-sort after adjustments (in case adjustments changed order)
     optimized_activities.sort(key=lambda x: x[1])
 
-    # Step 5: Update day.activities with optimized order
-    day.activities = [act for act, _ in optimized_activities]
+    # Step 5: Final validation - ensure no duplicates and proper ordering
+    validated_activities = []
+    for idx, (act, parsed_time) in enumerate(optimized_activities):
+        if idx > 0:
+            prev_act, prev_time = validated_activities[-1]
+            
+            # Ensure this activity starts after the previous one
+            if parsed_time <= prev_time:
+                # Push forward by at least 15 minutes to prevent duplicates
+                min_gap = 15
+                parsed_time = prev_time + min_gap
+                act.time = minutes_to_time_string(parsed_time)
+                print(
+                    f"[TimeOptimize] Pushed '{act.title}' forward to {act.time} "
+                    f"to prevent duplicate/overlapping time"
+                )
+        
+        validated_activities.append((act, parsed_time))
+
+    # Step 6: Update day.activities with validated order
+    day.activities = [act for act, _ in validated_activities]
 
     print(
         f"[TimeOptimize] Optimized {len(day.activities)} activities with "
@@ -1214,7 +1254,29 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
 
         for v in day_venues:
             # assign simple timeslots (will be refined by LLM)
-            slot = ["10:00 AM", "1:30 PM", "4:00 PM", "7:00 PM", "9:00 PM"][len(activities) % 5]
+            # Generate unique times based on position to avoid duplicates
+            num_venues = len(day_venues)
+            idx = len(activities)
+            if num_venues == 1:
+                slot = "12:00 PM"  # Noon for single activity
+            else:
+                # Distribute evenly from 10 AM to 9 PM
+                start_minutes = 10 * 60  # 10 AM
+                end_minutes = 21 * 60   # 9 PM
+                total_range = end_minutes - start_minutes
+                spacing = total_range / (num_venues + 1)
+                slot_minutes = start_minutes + int((idx + 1) * spacing)
+                # Convert to time string
+                hours = slot_minutes // 60
+                mins = slot_minutes % 60
+                if hours == 0:
+                    slot = f"12:{mins:02d} AM"
+                elif hours < 12:
+                    slot = f"{hours}:{mins:02d} AM"
+                elif hours == 12:
+                    slot = f"12:{mins:02d} PM"
+                else:
+                    slot = f"{hours - 12}:{mins:02d} PM"
             img = None
             if v.get("photo_reference"):
                 url = places_service.get_proxy_photo_url(v["photo_reference"], base_url) or None
@@ -1444,15 +1506,38 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
 
                 day_name = day.date.split(",")[0]
 
+                # Helper to convert minutes to time string
+                def minutes_to_time_string(minutes: int) -> str:
+                    """Convert minutes since midnight to 12-hour format."""
+                    hours = minutes // 60
+                    mins = minutes % 60
+                    if hours == 0:
+                        return f"12:{mins:02d} AM"
+                    elif hours < 12:
+                        return f"{hours}:{mins:02d} AM"
+                    elif hours == 12:
+                        return f"12:{mins:02d} PM"
+                    else:
+                        return f"{hours - 12}:{mins:02d} PM"
+
+                # Generate unique fallback times based on number of activities
+                num_activities = len(day.activities)
                 for idx, act in enumerate(day.activities):
-                    fallback_slots = [
-                        "9:00 AM",
-                        "12:00 PM",
-                        "3:00 PM",
-                        "6:00 PM",
-                        "8:30 PM",
-                    ]
-                    time_str = fallback_slots[idx % len(fallback_slots)]
+                    # Distribute times evenly across the day (9 AM to 9 PM = 12 hours)
+                    # Start at 9 AM, end at 9 PM
+                    start_hour = 9  # 9 AM
+                    end_hour = 21   # 9 PM
+                    total_minutes = (end_hour - start_hour) * 60
+                    
+                    if num_activities == 1:
+                        # Single activity - place at noon
+                        time_minutes = 12 * 60
+                    else:
+                        # Distribute evenly with spacing
+                        spacing = total_minutes / (num_activities + 1)
+                        time_minutes = start_hour * 60 + int((idx + 1) * spacing)
+                    
+                    time_str = minutes_to_time_string(time_minutes)
 
                     # Validate against opening hours (using cache)
                     if act.place_id:
@@ -1485,18 +1570,38 @@ def generate_itinerary_v2(payload: ItineraryGenerateRequest, request: Request) -
             parse_opening_hours,
         )
 
+        # Helper to convert minutes to time string
+        def minutes_to_time_string(minutes: int) -> str:
+            """Convert minutes since midnight to 12-hour format."""
+            hours = minutes // 60
+            mins = minutes % 60
+            if hours == 0:
+                return f"12:{mins:02d} AM"
+            elif hours < 12:
+                return f"{hours}:{mins:02d} AM"
+            elif hours == 12:
+                return f"12:{mins:02d} PM"
+            else:
+                return f"{hours - 12}:{mins:02d} PM"
+
         for day in days:
             day_name = day.date.split(",")[0]
 
+            # Generate unique fallback times based on number of activities
+            num_activities = len(day.activities)
             for idx, act in enumerate(day.activities):
-                fallback_slots = [
-                    "9:00 AM",
-                    "12:00 PM",
-                    "3:00 PM",
-                    "6:00 PM",
-                    "8:30 PM",
-                ]
-                time_str = fallback_slots[idx % len(fallback_slots)]
+                # Distribute times evenly across the day (9 AM to 9 PM = 12 hours)
+                start_hour = 9  # 9 AM
+                end_hour = 21   # 9 PM
+                total_minutes = (end_hour - start_hour) * 60
+                
+                if num_activities == 1:
+                    time_minutes = 12 * 60  # Noon
+                else:
+                    spacing = total_minutes / (num_activities + 1)
+                    time_minutes = start_hour * 60 + int((idx + 1) * spacing)
+                
+                time_str = minutes_to_time_string(time_minutes)
 
                 # Validate against opening hours (using cache)
                 if act.place_id:
