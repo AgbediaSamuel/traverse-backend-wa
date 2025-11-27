@@ -37,12 +37,18 @@ poetry install
 Activate the Poetry-managed virtual environment:
 
 ```bash
+poetry shell
+```
+
+Alternatively, you can use the direct activation command:
+
+```bash
 source $(poetry env info --path)/bin/activate
 ```
 
 ### 3. Configure Environment Variables
 
-Create a `.env` file in the project root with the required configuration (refer to the team for necessary API keys and settings).
+Create a `.env` file in the project root with the required configuration. Required environment variables include API keys for AI services, MongoDB connection strings, and Clerk authentication settings. Refer to the team for the necessary values.
 
 ### 4. Start the Development Server
 
@@ -83,10 +89,12 @@ We welcome contributions from team members! To contribute:
 1. **Create a Branch**: Create a feature branch from `main` with a descriptive name (e.g., `feature/add-new-endpoint`).
 2. **Make Changes**: Implement your changes following the existing code style and conventions.
 3. **Write Tests**: Add or update tests in the `tests/` directory to cover your changes.
-4. **Run Linting**: Ensure code quality by running:
+4. **Run Linting**: Ensure code quality by running the following checks:
    ```bash
-   poetry run ruff check .
-   poetry run black --check .
+   poetry run ruff check .        # Check for linting issues
+   poetry run ruff check --fix .  # Auto-fix linting issues
+   poetry run black --check .     # Check formatting
+   poetry run black .             # Auto-fix formatting
    ```
 5. **Submit a Pull Request**: Open a PR with a clear description of your changes and request a review.
 
