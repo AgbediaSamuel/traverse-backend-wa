@@ -82,22 +82,6 @@ For local development with nginx reverse proxy (useful with ngrok):
 
 3. Access the app at `http://localhost:8080` through the nginx proxy.
 
-## Contributing
-
-We welcome contributions from team members! To contribute:
-
-1. **Create a Branch**: Create a feature branch from `main` with a descriptive name (e.g., `feature/add-new-endpoint`).
-2. **Make Changes**: Implement your changes following the existing code style and conventions.
-3. **Write Tests**: Add or update tests in the `tests/` directory to cover your changes.
-4. **Run Linting**: Ensure code quality by running the following checks:
-   ```bash
-   poetry run ruff check .        # Check for linting issues
-   poetry run ruff check --fix .  # Auto-fix linting issues
-   poetry run black --check .     # Check formatting
-   poetry run black .             # Auto-fix formatting
-   ```
-5. **Submit a Pull Request**: Open a PR with a clear description of your changes and request a review.
-
 For questions or guidance, reach out to the team leads.
 
 ## License
