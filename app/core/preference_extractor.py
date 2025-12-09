@@ -9,7 +9,7 @@ from app.core.llm_provider import LLMProvider
 from app.core.settings import get_settings
 
 
-def extract_preferences_from_text(
+async def extract_preferences_from_text(
     text: str, context: dict[str, any] | None = None
 ) -> dict[str, any]:
     """
@@ -89,7 +89,8 @@ def extract_preferences_from_text(
     }
 
     try:
-        response = provider.chat(
+        # Use async chat method for parallelization
+        response = await provider.chat_async(
             messages=[system_prompt, user_prompt],
             temperature=0.3,  # Lower temperature for more consistent extraction
         )
