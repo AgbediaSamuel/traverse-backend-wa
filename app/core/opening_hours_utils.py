@@ -112,7 +112,9 @@ def parse_time_to_minutes(time_str: str) -> int:
 
         # Validate hour range for 12-hour format (must be 1-12)
         if hour < 1 or hour > 12:
-            print(f"[TimeParse] Invalid hour {hour} in 12-hour format '{time_str}', defaulting to noon")
+            print(
+                f"[TimeParse] Invalid hour {hour} in 12-hour format '{time_str}', defaulting to noon"
+            )
             return 12 * 60
 
         # Validate minute range
@@ -139,7 +141,9 @@ def parse_time_to_minutes(time_str: str) -> int:
 
         # Validate 24-hour format ranges
         if hour < 0 or hour > 23:
-            print(f"[TimeParse] Invalid hour {hour} in 24-hour format '{time_str}', defaulting to noon")
+            print(
+                f"[TimeParse] Invalid hour {hour} in 24-hour format '{time_str}', defaulting to noon"
+            )
             return 12 * 60
 
         if minute < 0 or minute > 59:

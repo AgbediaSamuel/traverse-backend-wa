@@ -26,12 +26,24 @@ class MongoDBRepo:
         # Load environment variables
         load_dotenv()
 
-        # MongoDB connection
-        mongodb_uri = os.getenv("MONGODB_URI")
-        database_name = os.getenv("DATABASE_NAME", "traverse_db")
+        # Determine which MongoDB URI to use based on environment
+        environment = os.getenv("ENVIRONMENT", "production").lower()
 
-        if not mongodb_uri:
-            raise ValueError("MONGODB_URI environment variable is required")
+        if environment == "development":
+            # In development, prefer MONGODB_URI_TEST, fallback to MONGODB_URI
+            mongodb_uri = os.getenv("MONGODB_URI_TEST") or os.getenv("MONGODB_URI")
+            database_name = os.getenv("DATABASE_NAME_TEST", "traverse_db_test")
+            if not mongodb_uri:
+                raise ValueError(
+                    "MONGODB_URI_TEST or MONGODB_URI environment variable is required for development"
+                )
+            print(f"🔧 Using TEST database: {database_name} (ENVIRONMENT={environment})")
+        else:
+            mongodb_uri = os.getenv("MONGODB_URI")
+            database_name = os.getenv("DATABASE_NAME", "traverse_db")
+            if not mongodb_uri:
+                raise ValueError("MONGODB_URI environment variable is required")
+            print(f"🚀 Using PRODUCTION database: {database_name} (ENVIRONMENT={environment})")
 
         # Initialize MongoDB client with robust connection settings
         # Add connection options to handle replica sets and SSL issues
@@ -198,7 +210,12 @@ class MongoDBRepo:
     # Users
     async def get_user_by_email(self, email: str) -> User | None:
         """Get user by email from MongoDB."""
-        user_doc = self.users_collection.find_one({"email": email})
+        import asyncio
+
+        def _find_user():
+            return self.users_collection.find_one({"email": email})
+
+        user_doc = await asyncio.to_thread(_find_user)
         if user_doc:
             user_doc.pop("_id", None)  # Remove MongoDB ObjectId
             # Return User model (without hashed_password)
@@ -216,18 +233,23 @@ class MongoDBRepo:
     # Clerk Integration Methods
     async def sync_clerk_user(self, clerk_data: ClerkUserSync) -> User:
         """Sync or create user from Clerk data."""
+        import asyncio
+
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         now = datetime.utcnow()
 
-        # Check if user already exists by clerk_user_id or email
-        existing_user = self.users_collection.find_one(
-            {
-                "$or": [
-                    {"clerk_user_id": clerk_data.clerk_user_id},
-                    {"email": clerk_data.email},
-                ]
-            }
-        )
+        # Wrap blocking MongoDB operations in executor to avoid blocking event loop
+        def _find_user():
+            return self.users_collection.find_one(
+                {
+                    "$or": [
+                        {"clerk_user_id": clerk_data.clerk_user_id},
+                        {"email": clerk_data.email},
+                    ]
+                }
+            )
+
+        existing_user = await asyncio.to_thread(_find_user)
 
         sanitized_first = clerk_data.first_name.strip() if clerk_data.first_name else None
         sanitized_last = clerk_data.last_name.strip() if clerk_data.last_name else None
@@ -258,7 +280,13 @@ class MongoDBRepo:
 
             if updates:
                 updates["updated_at"] = now
-                self.users_collection.update_one({"_id": existing_user["_id"]}, {"$set": updates})
+
+                def _update_user():
+                    self.users_collection.update_one(
+                        {"_id": existing_user["_id"]}, {"$set": updates}
+                    )
+
+                await asyncio.to_thread(_update_user)
                 existing_user.update(updates)
 
             existing_user.pop("_id", None)
@@ -291,7 +319,10 @@ class MongoDBRepo:
                 "updated_at": now,
             }
 
-            result = self.users_collection.insert_one(user_doc)
+            def _insert_user():
+                return self.users_collection.insert_one(user_doc)
+
+            result = await asyncio.to_thread(_insert_user)
             if result.inserted_id:
                 user_doc.pop("_id", None)  # Remove MongoDB ObjectId
                 return User(**user_doc)
@@ -300,7 +331,12 @@ class MongoDBRepo:
 
     async def get_user_by_clerk_id(self, clerk_user_id: str) -> User | None:
         """Get user by Clerk user ID."""
-        user_doc = self.users_collection.find_one({"clerk_user_id": clerk_user_id})
+        import asyncio
+
+        def _find_user():
+            return self.users_collection.find_one({"clerk_user_id": clerk_user_id})
+
+        user_doc = await asyncio.to_thread(_find_user)
         if user_doc:
             user_doc.pop("_id", None)  # Remove MongoDB ObjectId
             user_doc.pop("hashed_password", None)  # Remove if present
@@ -323,6 +359,8 @@ class MongoDBRepo:
         onboarding_skipped: bool = None,
     ) -> User | None:
         """Update user onboarding status."""
+        import asyncio
+
         update_data = {"updated_at": datetime.utcnow()}
 
         if onboarding_completed is not None:
@@ -331,9 +369,12 @@ class MongoDBRepo:
         if onboarding_skipped is not None:
             update_data["onboarding_skipped"] = onboarding_skipped
 
-        result = self.users_collection.update_one(
-            {"clerk_user_id": clerk_user_id}, {"$set": update_data}
-        )
+        def _update_user():
+            return self.users_collection.update_one(
+                {"clerk_user_id": clerk_user_id}, {"$set": update_data}
+            )
+
+        result = await asyncio.to_thread(_update_user)
 
         if result.modified_count > 0:
             return await self.get_user_by_clerk_id(clerk_user_id)
@@ -358,12 +399,20 @@ class MongoDBRepo:
         }
 
         # Upsert (update if exists, insert if not)
-        self.preferences_collection.update_one(
-            {"clerk_user_id": clerk_user_id}, {"$set": preferences_doc}, upsert=True
-        )
+        import asyncio
+
+        def _upsert_preferences():
+            self.preferences_collection.update_one(
+                {"clerk_user_id": clerk_user_id}, {"$set": preferences_doc}, upsert=True
+            )
+
+        await asyncio.to_thread(_upsert_preferences)
 
         # Return the saved preferences
-        saved_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        def _find_preferences():
+            return self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+
+        saved_doc = await asyncio.to_thread(_find_preferences)
         if saved_doc:
             saved_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**saved_doc)

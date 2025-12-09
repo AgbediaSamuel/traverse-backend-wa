@@ -146,7 +146,9 @@ async def handle_clerk_webhook(request: Request):
         else:
             print("Webhook signature verified successfully")
     else:
-        print("WARNING: Signature verification skipped (SKIP_SIGNATURE_VERIFICATION=True or secret not set)")
+        print(
+            "WARNING: Signature verification skipped (SKIP_SIGNATURE_VERIFICATION=True or secret not set)"
+        )
 
     try:
         # Parse the webhook payload

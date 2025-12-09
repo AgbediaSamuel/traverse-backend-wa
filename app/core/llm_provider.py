@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 import aisuite as ai  # type: ignore
+import httpx
 
 try:
     import google.generativeai as genai  # type: ignore
@@ -48,3 +49,15 @@ class LLMProvider:
                 temperature=temperature,
             )
             return resp.choices[0].message.content
+
+    async def chat_async(self, messages: list[dict[str, Any]], temperature: float = 1.0) -> str:
+        """Async version of chat completion request. Runs sync operations in executor for parallelization."""
+        import asyncio
+
+        def _sync_chat():
+            """Wrapper to run sync chat in executor."""
+            return self.chat(messages, temperature)
+
+        # Run sync operation in thread pool to avoid blocking event loop
+        # This allows multiple LLM calls to run in parallel
+        return await asyncio.to_thread(_sync_chat)

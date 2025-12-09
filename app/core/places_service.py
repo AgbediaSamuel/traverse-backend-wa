@@ -97,6 +97,8 @@ class PlacesService:
         allowed_types: list[str] | None = None,
         max_pages: int = 1,
         place_id: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search for places using Text Search API.
@@ -107,31 +109,34 @@ class PlacesService:
             radius: Search radius in meters (default 5000m = 5km)
             min_rating: Minimum rating filter (default 3.5)
             price_level: List of acceptable price levels [1-4] (optional)
+            require_photo: Whether to require photos (default False)
+            allowed_types: List of allowed Google Place types (optional)
+            max_pages: Maximum number of result pages to fetch (default 1)
             place_id: Optional Google Place ID (more reliable than geocoding)
+            lat: Optional latitude (if provided, skips place_id lookup and geocoding)
+            lng: Optional longitude (if provided, skips place_id lookup and geocoding)
 
         Returns:
             List of place dictionaries with basic info
         """
-        # Get coordinates: prefer place_id if provided, otherwise geocode
-        lat = None
-        lng = None
-
-        if place_id:
-            # Use Place Details API to get coordinates (more reliable)
-            try:
-                place_details = self.get_place_details(place_id)
-                if place_details and place_details.get("lat") and place_details.get("lng"):
-                    lat = place_details["lat"]
-                    lng = place_details["lng"]
-                    print(f"[search_places] Using place_id {place_id} → ({lat}, {lng})")
-                else:
+        # Get coordinates: prefer provided lat/lng, then place_id, then geocode
+        if lat is None or lng is None:
+            if place_id:
+                # Use Place Details API to get coordinates (more reliable)
+                try:
+                    place_details = self.get_place_details(place_id)
+                    if place_details and place_details.get("lat") and place_details.get("lng"):
+                        lat = place_details["lat"]
+                        lng = place_details["lng"]
+                        print(f"[search_places] Using place_id {place_id} → ({lat}, {lng})")
+                    else:
+                        print(
+                            f"[search_places] Failed to get coordinates from place_id, falling back to geocoding"
+                        )
+                except Exception as e:
                     print(
-                        f"[search_places] Failed to get coordinates from place_id, falling back to geocoding"
+                        f"[search_places] Error getting place details for place_id: {e}, falling back to geocoding"
                     )
-            except Exception as e:
-                print(
-                    f"[search_places] Error getting place details for place_id: {e}, falling back to geocoding"
-                )
 
         if lat is None or lng is None:
             # Fall back to geocoding if place_id not provided or failed
@@ -269,23 +274,31 @@ class PlacesService:
             print(f"Error searching places: {e}")
             return []
 
-    def get_place_details(self, place_id: str) -> dict[str, Any] | None:
+    def get_place_details(self, place_id: str, fields: str | None = None) -> dict[str, Any] | None:
         """
         Get detailed information about a specific place.
 
         Args:
             place_id: Google Place ID
+            fields: Optional comma-separated list of fields to request.
+                    If None, requests all common fields.
+                    Use "opening_hours" for venues, "geometry" for coordinates only.
 
         Returns:
             Dictionary with detailed place information
         """
         url = f"{PLACES_API_BASE}/details/json"
-        params = {
-            "place_id": place_id,
-            "fields": (
+
+        # Default to all fields if not specified (backward compatibility)
+        if fields is None:
+            fields = (
                 "name,formatted_address,rating,price_level,photos,"
                 "geometry,url,types,opening_hours"
-            ),
+            )
+
+        params = {
+            "place_id": place_id,
+            "fields": fields,
             "key": self.api_key,
         }
 
@@ -300,33 +313,44 @@ class PlacesService:
 
             result = data.get("result", {})
 
-            # Extract coordinates from geometry.location
-            lat = None
-            lng = None
-            geometry = result.get("geometry")
-            if geometry and geometry.get("location"):
-                location = geometry["location"]
-                lat = location.get("lat")
-                lng = location.get("lng")
+            # Build result dict based on requested fields
+            result_dict = {"place_id": place_id}
 
-            result_dict = {
-                "place_id": place_id,
-                "name": result.get("name"),
-                "address": result.get("formatted_address"),
-                "rating": result.get("rating"),
-                "price_level": result.get("price_level"),
-                "types": result.get("types", []),
-                "google_maps_url": result.get("url"),
-                "photo_reference": (
+            # Extract coordinates from geometry.location (if geometry was requested)
+            if "geometry" in fields:
+                lat = None
+                lng = None
+                geometry = result.get("geometry")
+                if geometry and geometry.get("location"):
+                    location = geometry["location"]
+                    lat = location.get("lat")
+                    lng = location.get("lng")
+                result_dict["lat"] = lat
+                result_dict["lng"] = lng
+
+            # Only extract fields that were requested
+            if "name" in fields:
+                result_dict["name"] = result.get("name")
+            if "formatted_address" in fields:
+                result_dict["address"] = result.get("formatted_address")
+            if "rating" in fields:
+                result_dict["rating"] = result.get("rating")
+            if "price_level" in fields:
+                result_dict["price_level"] = result.get("price_level")
+            if "types" in fields:
+                result_dict["types"] = result.get("types", [])
+            if "url" in fields:
+                result_dict["google_maps_url"] = result.get("url")
+            if "photos" in fields:
+                result_dict["photo_reference"] = (
                     result.get("photos", [{}])[0].get("photo_reference")
                     if result.get("photos")
                     else None
-                ),
-                "lat": lat,
-                "lng": lng,
-            }
-            opening = result.get("opening_hours", {})
-            result_dict["opening_hours"] = opening.get("weekday_text", [])
+                )
+            if "opening_hours" in fields:
+                opening = result.get("opening_hours", {})
+                result_dict["opening_hours"] = opening.get("weekday_text", [])
+
             return result_dict
 
         except Exception as e:
@@ -790,6 +814,7 @@ class PlacesService:
         # Use max_pages if provided, otherwise default to 1
         search_max_pages = max_pages if max_pages is not None else 1
 
+        # Sequential search (will be parallelized by caller if async)
         for query in all_queries:
             places = self.search_places(
                 location=destination,
