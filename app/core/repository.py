@@ -37,17 +37,13 @@ class MongoDBRepo:
                 raise ValueError(
                     "MONGODB_URI_TEST or MONGODB_URI environment variable is required for development"
                 )
-            print(
-                f"🔧 Using TEST database: {database_name} (ENVIRONMENT={environment})"
-            )
+            print(f"🔧 Using TEST database: {database_name} (ENVIRONMENT={environment})")
         else:
             mongodb_uri = os.getenv("MONGODB_URI")
             database_name = os.getenv("DATABASE_NAME", "traverse_db")
             if not mongodb_uri:
                 raise ValueError("MONGODB_URI environment variable is required")
-            print(
-                f"🚀 Using PRODUCTION database: {database_name} (ENVIRONMENT={environment})"
-            )
+            print(f"🚀 Using PRODUCTION database: {database_name} (ENVIRONMENT={environment})")
 
         # Initialize MongoDB client with robust connection settings
         # Add connection options to handle replica sets and SSL issues
@@ -438,9 +434,7 @@ class MongoDBRepo:
 
         # Return the saved preferences
         def _find_preferences():
-            return self.preferences_collection.find_one(
-                {"clerk_user_id": clerk_user_id}
-            )
+            return self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
 
         saved_doc = await asyncio.to_thread(_find_preferences)
         if saved_doc:
