@@ -10,6 +10,7 @@ load_dotenv()
 
 from app.api.routers.auth import router as auth_router
 from app.api.routers.calendar import router as calendar_router
+from app.api.routers.events import router as events_router
 from app.api.routers.itineraries import router as itineraries_router
 from app.api.routers.places import router as places_router
 from app.api.routers.webhooks import webhook_router
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     application.include_router(auth_router)
     application.include_router(itineraries_router)
     application.include_router(calendar_router)
+    application.include_router(events_router)
     application.include_router(places_router)
     # Webhook router for Clerk webhooks
     # Handles /webhooks/clerk (nginx strips /api/ from /api/webhooks/clerk)

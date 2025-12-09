@@ -59,7 +59,9 @@ class ClerkAuth:
                     # Format: pk_test_<instance-id> or pk_live_<instance-id>
                     # But this doesn't give us the full domain
                     # For now, skip JWKS in dev mode (we'll use unverified decoding)
-                    is_dev = os.getenv("ENVIRONMENT", "development").lower() == "development"
+                    is_dev = (
+                        os.getenv("ENVIRONMENT", "development").lower() == "development"
+                    )
                     if is_dev:
                         logger.debug(
                             "Development mode: Skipping JWKS verification. "
@@ -74,13 +76,17 @@ class ClerkAuth:
                         return None
                 else:
                     # No publishable key - can't verify JWKS
-                    is_dev = os.getenv("ENVIRONMENT", "development").lower() == "development"
+                    is_dev = (
+                        os.getenv("ENVIRONMENT", "development").lower() == "development"
+                    )
                     if is_dev:
                         logger.debug(
                             "Development mode: No CLERK_PUBLISHABLE_KEY set, skipping JWKS verification"
                         )
                     else:
-                        logger.warning("No CLERK_PUBLISHABLE_KEY set, skipping JWKS verification")
+                        logger.warning(
+                            "No CLERK_PUBLISHABLE_KEY set, skipping JWKS verification"
+                        )
                     return None
 
             if not jwks_url:
@@ -163,7 +169,9 @@ class ClerkAuth:
             # TODO: Remove this fallback in production or make it configurable
             is_dev = os.getenv("ENVIRONMENT", "development").lower() == "development"
             if is_dev:
-                logger.debug("Using development mode: decoding without signature verification")
+                logger.debug(
+                    "Using development mode: decoding without signature verification"
+                )
                 try:
                     payload = jwt.decode(
                         token,
@@ -179,11 +187,15 @@ class ClerkAuth:
                     logger.debug(f"Payload contents: {payload}")
                     return payload
                 except Exception as decode_error:
-                    logger.error(f"Decode error in dev mode: {decode_error}", exc_info=True)
+                    logger.error(
+                        f"Decode error in dev mode: {decode_error}", exc_info=True
+                    )
                     raise
             else:
                 # Production: strict verification required
-                logger.error("Production mode: signature verification required but failed")
+                logger.error(
+                    "Production mode: signature verification required but failed"
+                )
                 return None
 
         except JWTError as e:
@@ -216,7 +228,9 @@ class ClerkAuth:
                 if response.status_code == 200:
                     return response.json()
                 else:
-                    logger.error(f"Clerk API error: {response.status_code} - {response.text}")
+                    logger.error(
+                        f"Clerk API error: {response.status_code} - {response.text}"
+                    )
                     return None
 
         except Exception as e:
@@ -233,8 +247,12 @@ class ClerkAuth:
         Returns:
             Standardized user data dictionary
         """
-        first_name = clerk_payload.get("given_name") or clerk_payload.get("first_name") or ""
-        last_name = clerk_payload.get("family_name") or clerk_payload.get("last_name") or ""
+        first_name = (
+            clerk_payload.get("given_name") or clerk_payload.get("first_name") or ""
+        )
+        last_name = (
+            clerk_payload.get("family_name") or clerk_payload.get("last_name") or ""
+        )
 
         if (not first_name or not last_name) and clerk_payload.get("name"):
             name_parts = clerk_payload.get("name", "").strip().split()

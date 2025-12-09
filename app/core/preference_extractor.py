@@ -46,9 +46,7 @@ async def extract_preferences_from_text(
         if context.get("trip_type"):
             context_str += f"Trip Type: {context['trip_type']}\n"
         if context.get("selected_interests"):
-            context_str += (
-                f"User's selected interests: {', '.join(context['selected_interests'][:5])}\n"
-            )
+            context_str += f"User's selected interests: {', '.join(context['selected_interests'][:5])}\n"
 
     system_prompt = {
         "role": "system",

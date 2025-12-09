@@ -27,7 +27,10 @@ def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> fl
     dlng = math.radians(lng2 - lng1)
 
     # Haversine formula
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     return R * c
@@ -57,7 +60,9 @@ def cluster_venues_by_days(
 
     if num_days >= len(valid_venues):
         # More days than venues - one venue per day
-        return [[v] for v in venues[:num_days]] + [[] for _ in range(num_days - len(venues))]
+        return [[v] for v in venues[:num_days]] + [
+            [] for _ in range(num_days - len(venues))
+        ]
 
     # Initialize cluster centers
     if randomize_start:
@@ -138,7 +143,9 @@ def cluster_venues_by_days(
     return final_clusters
 
 
-def distribute_evenly(venues: list[dict[str, Any]], num_groups: int) -> list[list[dict[str, Any]]]:
+def distribute_evenly(
+    venues: list[dict[str, Any]], num_groups: int
+) -> list[list[dict[str, Any]]]:
     """Fallback: distribute venues evenly across groups."""
     groups: list[list[dict[str, Any]]] = [[] for _ in range(num_groups)]
     for i, v in enumerate(venues):

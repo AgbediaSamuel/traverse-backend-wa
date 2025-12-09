@@ -92,7 +92,9 @@ def get_activity_mix_guidance(
         duration_mix = "Include 1-2 long activities (3-4 hours like museums or spa), and 1-2 shorter activities."
     elif pace_style <= 66:
         pace_label = "moderate"
-        duration_mix = "Mix of 1 long activity (2-3 hours), 2-3 medium activities (1.5-2 hours)."
+        duration_mix = (
+            "Mix of 1 long activity (2-3 hours), 2-3 medium activities (1.5-2 hours)."
+        )
     else:
         pace_label = "energetic"
         duration_mix = "Pack the day with 2-3 medium activities (1.5-2 hours) and 2-3 short activities (30min-1 hour)."
@@ -103,9 +105,7 @@ def get_activity_mix_guidance(
     elif schedule_style <= 66:
         schedule_guidance = "Start around 9 AM, can go until 9-10 PM."
     else:
-        schedule_guidance = (
-            "Can start later (10-11 AM), include evening/nightlife activities until midnight."
-        )
+        schedule_guidance = "Can start later (10-11 AM), include evening/nightlife activities until midnight."
 
     # Day-specific guidance
     if day_number == 1:

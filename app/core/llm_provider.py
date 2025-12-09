@@ -39,7 +39,9 @@ class LLMProvider:
         if self._genai_model is not None:
             # Map OpenAI-style messages to a single prompt for simplicity
             # Concatenate roles for context
-            prompt = "\n".join(f"{m.get('role','user')}: {m.get('content','')}" for m in messages)
+            prompt = "\n".join(
+                f"{m.get('role','user')}: {m.get('content','')}" for m in messages
+            )
             response = self._genai_model.generate_content(prompt)
             return response.text or ""
         else:
@@ -50,7 +52,9 @@ class LLMProvider:
             )
             return resp.choices[0].message.content
 
-    async def chat_async(self, messages: list[dict[str, Any]], temperature: float = 1.0) -> str:
+    async def chat_async(
+        self, messages: list[dict[str, Any]], temperature: float = 1.0
+    ) -> str:
         """Async version of chat completion request. Runs sync operations in executor for parallelization."""
         import asyncio
 
