@@ -1,9 +1,8 @@
 from urllib.parse import unquote
 
 import requests
-from fastapi import APIRouter, HTTPException, Query, Response
-
 from app.core.places_service import places_service
+from fastapi import APIRouter, HTTPException, Query, Response
 
 router = APIRouter(prefix="/places", tags=["places"])
 
@@ -50,4 +49,6 @@ async def get_place_photo(
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Failed to fetch photo: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing photo request: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error processing photo request: {str(e)}"
+        )

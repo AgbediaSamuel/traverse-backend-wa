@@ -4,10 +4,8 @@ import os
 import time
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
-
-from dotenv import load_dotenv
-from pymongo import MongoClient
 
 from app.core.schemas import (
     ClerkUserSync,
@@ -16,6 +14,8 @@ from app.core.schemas import (
     UserPreferences,
     UserPreferencesCreate,
 )
+from dotenv import load_dotenv
+from pymongo import MongoClient
 
 # Load environment variables
 load_dotenv()
@@ -70,6 +70,8 @@ class MongoDBRepo:
         self.trip_invites_collection = self.db.trip_invites
         self.cover_images_collection = self.db.cover_images
         self.destination_profiles_collection = self.db.destination_profiles
+        self.events_collection = self.db.events
+        self.user_favorites_collection = self.db.user_favorites
 
         # Test connection and create indexes only if connection works
         try:
@@ -81,8 +83,14 @@ class MongoDBRepo:
             try:
                 self.users_collection.create_index("email", unique=True)
                 self.cover_images_collection.create_index("destination", unique=True)
-                self.destination_profiles_collection.create_index("destination", unique=True)
+                self.destination_profiles_collection.create_index(
+                    "destination", unique=True
+                )
                 self.itineraries_collection.create_index("fingerprint")
+                self.user_favorites_collection.create_index(
+                    "clerk_user_id", unique=True
+                )
+                self.user_favorites_collection.create_index("event_ids")
                 print("Database indexes created")
             except Exception as index_error:
                 print(f"Index creation failed (might already exist): {index_error}")
@@ -96,7 +104,10 @@ class MongoDBRepo:
                     "Replica set connection issue (continuing without DB)"
                 )
             elif "SSL handshake failed" in error_msg:
-                print("MongoDB connection warning: " "SSL handshake issue (continuing without DB)")
+                print(
+                    "MongoDB connection warning: "
+                    "SSL handshake issue (continuing without DB)"
+                )
             else:
                 print(f"MongoDB connection failed: {error_msg[:200]}...")
             print("Will continue without database connection (for development)")
@@ -104,7 +115,9 @@ class MongoDBRepo:
     # Itineraries
     def find_itinerary_by_fingerprint(self, fingerprint: str) -> dict | None:
         """Find an existing itinerary by its fingerprint hash."""
-        itinerary_doc = self.itineraries_collection.find_one({"fingerprint": fingerprint})
+        itinerary_doc = self.itineraries_collection.find_one(
+            {"fingerprint": fingerprint}
+        )
         if itinerary_doc:
             itinerary_doc.pop("_id", None)  # Remove MongoDB ObjectId
         return itinerary_doc
@@ -142,7 +155,9 @@ class MongoDBRepo:
         """Get all itineraries for a user by clerk_user_id."""
         # Get user email for group trip participant matching
         user_doc = self.users_collection.find_one({"clerk_user_id": clerk_user_id})
-        user_email = user_doc.get("email") if user_doc and user_doc.get("email") else None
+        user_email = (
+            user_doc.get("email") if user_doc and user_doc.get("email") else None
+        )
 
         # Find itineraries directly linked to user
         direct_itineraries = list(
@@ -169,7 +184,9 @@ class MongoDBRepo:
                     {
                         "document.trip_type": "group",
                         "document.group": {"$exists": True, "$ne": None},
-                        "document.group.participants": {"$elemMatch": {"email": user_email}},
+                        "document.group.participants": {
+                            "$elemMatch": {"email": user_email}
+                        },
                     }
                 ).sort("created_at", -1)
             )
@@ -179,7 +196,9 @@ class MongoDBRepo:
                 itn.pop("_id", None)
                 if itn["id"] not in seen_ids:
                     # Double-check that user's email is in participants
-                    participants = itn.get("document", {}).get("group", {}).get("participants", [])
+                    participants = (
+                        itn.get("document", {}).get("group", {}).get("participants", [])
+                    )
                     if any(p.get("email") == user_email for p in participants):
                         itineraries.append(itn)
                         seen_ids.add(itn["id"])
@@ -199,7 +218,9 @@ class MongoDBRepo:
             for invite in invites_with_itineraries:
                 itinerary_id = invite.get("itinerary_id")
                 if itinerary_id and itinerary_id not in seen_ids:
-                    itinerary = self.itineraries_collection.find_one({"id": itinerary_id})
+                    itinerary = self.itineraries_collection.find_one(
+                        {"id": itinerary_id}
+                    )
                     if itinerary:
                         itinerary.pop("_id", None)
                         itineraries.append(itinerary)
@@ -251,12 +272,15 @@ class MongoDBRepo:
 
         existing_user = await asyncio.to_thread(_find_user)
 
-        sanitized_first = clerk_data.first_name.strip() if clerk_data.first_name else None
+        sanitized_first = (
+            clerk_data.first_name.strip() if clerk_data.first_name else None
+        )
         sanitized_last = clerk_data.last_name.strip() if clerk_data.last_name else None
         sanitized_full = (
             clerk_data.full_name.strip()
             if clerk_data.full_name and clerk_data.full_name.strip()
-            else " ".join(part for part in [sanitized_first, sanitized_last] if part) or None
+            else " ".join(part for part in [sanitized_first, sanitized_last] if part)
+            or None
         )
         sanitized_image = clerk_data.image_url.strip() if clerk_data.image_url else None
 
@@ -419,9 +443,13 @@ class MongoDBRepo:
         else:
             raise Exception("Failed to save user preferences")
 
-    async def get_user_preferences(self, clerk_user_id: str) -> Optional[UserPreferences]:
+    async def get_user_preferences(
+        self, clerk_user_id: str
+    ) -> Optional[UserPreferences]:
         """Get user travel preferences by Clerk user ID."""
-        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        preferences_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if preferences_doc:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return UserPreferences(**preferences_doc)
@@ -429,7 +457,9 @@ class MongoDBRepo:
 
     def get_user_preferences_dict(self, clerk_user_id: str) -> dict | None:
         """Get user travel preferences as dict (sync version for itinerary generation)."""
-        preferences_doc = self.preferences_collection.find_one({"clerk_user_id": clerk_user_id})
+        preferences_doc = self.preferences_collection.find_one(
+            {"clerk_user_id": clerk_user_id}
+        )
         if preferences_doc:
             preferences_doc.pop("_id", None)  # Remove MongoDB ObjectId
             return preferences_doc
@@ -457,7 +487,9 @@ class MongoDBRepo:
         now = datetime.utcnow()
 
         # Add organizer as first participant
-        organizer_first_name = organizer_name.split()[0] if organizer_name else "Organizer"
+        organizer_first_name = (
+            organizer_name.split()[0] if organizer_name else "Organizer"
+        )
         organizer_last_name = (
             " ".join(organizer_name.split()[1:])
             if organizer_name and len(organizer_name.split()) > 1
@@ -507,7 +539,9 @@ class MongoDBRepo:
 
     def get_user_trip_invites(self, clerk_user_id: str) -> list[dict]:
         """Get all trip invites created by a user."""
-        invites = list(self.trip_invites_collection.find({"organizer_clerk_id": clerk_user_id}))
+        invites = list(
+            self.trip_invites_collection.find({"organizer_clerk_id": clerk_user_id})
+        )
         for invite in invites:
             invite.pop("_id", None)
         return invites
@@ -518,7 +552,9 @@ class MongoDBRepo:
             self.trip_invites_collection.find(
                 {
                     "participants.email": email,
-                    "participants": {"$elemMatch": {"email": email, "is_organizer": {"$ne": True}}},
+                    "participants": {
+                        "$elemMatch": {"email": email, "is_organizer": {"$ne": True}}
+                    },
                 }
             )
         )
@@ -731,7 +767,9 @@ class MongoDBRepo:
 
         participants = invite.get("participants", [])
         for participant in participants:
-            if participant["email"] in participant_emails and not participant.get("is_organizer"):
+            if participant["email"] in participant_emails and not participant.get(
+                "is_organizer"
+            ):
                 participant["status"] = "invited"
                 participant["available_dates"] = []
                 if "submitted_at" in participant:
@@ -820,11 +858,15 @@ class MongoDBRepo:
     # Destination Profiles
     def get_destination_profile(self, destination: str) -> dict | None:
         """Get cached destination profile (available categories) for a city."""
-        profile_doc = self.destination_profiles_collection.find_one({"destination": destination})
+        profile_doc = self.destination_profiles_collection.find_one(
+            {"destination": destination}
+        )
         if profile_doc:
             profile_doc.pop("_id", None)  # Remove MongoDB ObjectId
             # Convert list back to set
-            if "categories" in profile_doc and isinstance(profile_doc["categories"], list):
+            if "categories" in profile_doc and isinstance(
+                profile_doc["categories"], list
+            ):
                 profile_doc["categories"] = set(profile_doc["categories"])
         return profile_doc
 
@@ -844,6 +886,153 @@ class MongoDBRepo:
             upsert=True,
         )
         return result.upserted_id is not None or result.modified_count > 0
+
+    # Events
+    async def import_events_from_csv(self, csv_path: str | Path) -> dict[str, Any]:
+        """
+        Import events from CSV file into database.
+        Replaces all existing events with events from CSV.
+
+        Args:
+            csv_path: Path to CSV file
+
+        Returns:
+            Dictionary with import statistics
+        """
+        import asyncio
+        import csv
+
+        def _parse_price_range(price_str: str) -> str:
+            """Parse price range and convert # to ₦."""
+            if not price_str or price_str.strip().lower() == "free":
+                return "Free"
+            price_str = price_str.strip()
+            if "#" in price_str:
+                price_str = price_str.replace("#", "₦")
+            return price_str
+
+        def _parse_date(date_str: str) -> str:
+            """Parse date string."""
+            if not date_str:
+                return ""
+            date_str = date_str.strip()
+            if " - " in date_str:
+                return date_str
+            try:
+                date_obj = datetime.strptime(date_str, "%m/%d/%Y")
+                return date_obj.strftime("%B %d, %Y")
+            except ValueError:
+                return date_str
+
+        def _import_events():
+            csv_path_obj = Path(csv_path)
+            if not csv_path_obj.exists():
+                raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
+            events = []
+            now = datetime.utcnow()
+
+            with open(csv_path_obj, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+
+                for row in reader:
+                    if not row.get("Event Name") or not row.get("Event Name").strip():
+                        continue
+
+                    event = {
+                        "event_name": row.get("Event Name", "").strip(),
+                        "type": row.get("Type", "").strip(),
+                        "location": row.get("Location", "").strip(),
+                        "date": _parse_date(row.get("Date", "")),
+                        "time": row.get("Time", "").strip() or None,
+                        "price_range": _parse_price_range(row.get("Price Range", "")),
+                        "primary_link": row.get("Primary Link", "").strip(),
+                        "image_url": row.get("Image Url", "").strip() or None,
+                        "note": row.get("Note", "").strip() or None,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+
+                    if event["event_name"] and event["primary_link"]:
+                        events.append(event)
+
+            # Delete all existing events and insert new ones
+            self.events_collection.delete_many({})
+            if events:
+                self.events_collection.insert_many(events)
+
+            return {
+                "imported": len(events),
+                "deleted": True,
+                "timestamp": now.isoformat(),
+            }
+
+        return await asyncio.to_thread(_import_events)
+
+    async def get_all_events(self) -> list[dict[str, Any]]:
+        """Get all events from database."""
+        import asyncio
+
+        def _get_events():
+            events = list(self.events_collection.find({}, {"_id": 0}))
+            return events
+
+        return await asyncio.to_thread(_get_events)
+
+    async def get_user_favorites(self, clerk_user_id: str) -> list[str]:
+        """Get list of favorited event identifiers for a user."""
+        import asyncio
+
+        def _get_favorites():
+            fav_doc = self.user_favorites_collection.find_one(
+                {"clerk_user_id": clerk_user_id}
+            )
+            if fav_doc:
+                return fav_doc.get("event_ids", [])
+            return []
+
+        return await asyncio.to_thread(_get_favorites)
+
+    async def add_user_favorite(
+        self, clerk_user_id: str, event_identifier: str
+    ) -> bool:
+        """Add an event to user's favorites."""
+        import asyncio
+
+        def _add_favorite():
+            result = self.user_favorites_collection.update_one(
+                {"clerk_user_id": clerk_user_id},
+                {
+                    "$addToSet": {"event_ids": event_identifier},
+                    "$setOnInsert": {
+                        "created_at": datetime.utcnow(),
+                        "clerk_user_id": clerk_user_id,
+                    },
+                    "$set": {"updated_at": datetime.utcnow()},
+                },
+                upsert=True,
+            )
+            return result.modified_count > 0 or result.upserted_id is not None
+
+        return await asyncio.to_thread(_add_favorite)
+
+    async def remove_user_favorite(
+        self, clerk_user_id: str, event_identifier: str
+    ) -> bool:
+        """Remove an event from user's favorites."""
+        import asyncio
+
+        def _remove_favorite():
+            result = self.user_favorites_collection.update_one(
+                {"clerk_user_id": clerk_user_id},
+                {
+                    "$pull": {"event_ids": event_identifier},
+                    "$set": {"updated_at": datetime.utcnow()},
+                },
+            )
+            return result.modified_count > 0
+
+        return await asyncio.to_thread(_remove_favorite)
 
 
 # Create a single instance to be used throughout the app

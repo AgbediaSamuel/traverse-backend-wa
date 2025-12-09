@@ -39,7 +39,9 @@ class LLMProvider:
         if self._genai_model is not None:
             # Map OpenAI-style messages to a single prompt for simplicity
             # Concatenate roles for context
-            prompt = "\n".join(f"{m.get('role','user')}: {m.get('content','')}" for m in messages)
+            prompt = "\n".join(
+                f"{m.get('role','user')}: {m.get('content','')}" for m in messages
+            )
             response = self._genai_model.generate_content(prompt)
             return response.text or ""
         else:

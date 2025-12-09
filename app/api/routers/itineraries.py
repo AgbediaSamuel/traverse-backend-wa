@@ -7,8 +7,6 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
-
 from app.core.clerk_security import get_current_user_from_clerk
 from app.core.cover_image_service import cover_image_service
 from app.core.destination_profiling_service import destination_profiling_service
@@ -24,6 +22,7 @@ from app.core.schemas import (
     User,
 )
 from app.core.semantic_category_service import semantic_category_service
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,10 @@ def _optimize_day_times(
         parse_opening_hours,
         parse_time_to_minutes,
     )
-    from app.core.travel_time_utils import estimate_activity_duration, estimate_travel_time
+    from app.core.travel_time_utils import (
+        estimate_activity_duration,
+        estimate_travel_time,
+    )
 
     # Helper to convert minutes back to time string
     def minutes_to_time_string(minutes: int) -> str:
@@ -94,7 +96,10 @@ def _optimize_day_times(
 
     # Step 2: Sort by parsed time (chronological order)
     activities_with_time.sort(key=lambda x: x[1])
-    print(f"[TimeOptimize] Sorted {len(activities_with_time)} activities " f"chronologically")
+    print(
+        f"[TimeOptimize] Sorted {len(activities_with_time)} activities "
+        f"chronologically"
+    )
 
     # Step 3: Validate and adjust times based on travel constraints
     day_name = day.date.split(",")[0].strip()  # Extract day name (e.g., "Monday")
@@ -112,7 +117,9 @@ def _optimize_day_times(
 
             # Get venue data for duration and travel time
             prev_venue_data = get_venue_data(prev_act.place_id)
-            prev_venue_types = prev_venue_data.get("types", []) if prev_venue_data else []
+            prev_venue_types = (
+                prev_venue_data.get("types", []) if prev_venue_data else []
+            )
 
             # Calculate required start time (previous activity end + travel + buffer)
             prev_duration = estimate_activity_duration(prev_venue_types, pace_style)
@@ -291,11 +298,16 @@ def _pass_b(
 
     # Handle edge case: empty preference text
     if not user_preference or not user_preference.strip():
-        print("[Pass B] WARNING: Empty preference text! " "Using fallback default preferences.")
+        print(
+            "[Pass B] WARNING: Empty preference text! "
+            "Using fallback default preferences."
+        )
         user_preference = "tourist attractions, popular places, things to do"
 
     # Get destination profile (available categories)
-    destination_profile = destination_profiling_service.get_destination_profile(destination)
+    destination_profile = destination_profiling_service.get_destination_profile(
+        destination
+    )
     print(
         f"[Pass B] Destination profile has "
         f"{len(destination_profile)} categories: "
@@ -366,7 +378,9 @@ def _pass_b(
 
             # Stop if we have enough
             if len(new_venues) >= pass_b_max:
-                print(f"[Pass B] Reached target ({pass_b_max} venues), " "stopping search")
+                print(
+                    f"[Pass B] Reached target ({pass_b_max} venues), " "stopping search"
+                )
                 break
         except Exception as e:
             print(f"[Pass B] ERROR searching '{category}': {e}")
@@ -502,14 +516,19 @@ async def generate_itinerary_v2(
 
     All input is validated using Pydantic schemas for security and data integrity.
     """
-    from app.core.itinerary_planner import calculate_daily_activities, get_budget_price_levels
+    from app.core.itinerary_planner import (
+        calculate_daily_activities,
+        get_budget_price_levels,
+    )
     from app.core.preference_aggregator import aggregate_preferences
 
     # Extract validated data from schema
     trip_name = payload.trip_name
     traveler_name = payload.traveler_name
     destination = payload.destination
-    destination_place_id = payload.destination_place_id  # Google Place ID from autocomplete
+    destination_place_id = (
+        payload.destination_place_id
+    )  # Google Place ID from autocomplete
     dates = payload.dates
     duration = payload.duration or ""
     clerk_user_id = payload.clerk_user_id
@@ -601,8 +620,12 @@ async def generate_itinerary_v2(
 
     budget_style = aggregated_prefs.get("budget_style", 50) if aggregated_prefs else 50
     pace_style = aggregated_prefs.get("pace_style", 50) if aggregated_prefs else 50
-    schedule_style = aggregated_prefs.get("schedule_style", 50) if aggregated_prefs else 50
-    interests = aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
+    schedule_style = (
+        aggregated_prefs.get("schedule_style", 50) if aggregated_prefs else 50
+    )
+    interests = (
+        aggregated_prefs.get("selected_interests", []) if aggregated_prefs else []
+    )
 
     # Start trip notes generation early - only needs destination, trip_type, duration, and interests
     # This runs in parallel with all venue searching, saving ~3 seconds
@@ -680,7 +703,9 @@ async def generate_itinerary_v2(
         ]
     elif isinstance(raw_other_interests, str):
         other_interests_texts = [
-            part.strip() for part in re.split(r"[,\n]", raw_other_interests) if part.strip()
+            part.strip()
+            for part in re.split(r"[,\n]", raw_other_interests)
+            if part.strip()
         ]
     else:
         other_interests_texts = []
@@ -719,91 +744,7 @@ async def generate_itinerary_v2(
                     "selected_interests": interests,
                 },
             )
-        )
-        task_labels.append("vibe_notes")
-
-    # Task 3: Extract from payload.notes (group trips)
-    if trip_type == "group" and payload.notes:
-        extraction_tasks.append(
-            extract_preferences_from_text(
-                payload.notes,
-                context={
-                    "destination": destination,
-                    "trip_type": trip_type,
-                    "selected_interests": interests,
-                },
-            )
-        )
-        task_labels.append("group_notes")
-
-    # Run all extractions in parallel
-    if extraction_tasks:
-        print(f"[PreferenceExtractor] Running {len(extraction_tasks)} extractions in parallel...")
-        extraction_results = await asyncio.gather(*extraction_tasks)
-
-        # Initialize merged result
-        extracted_from_other = {
-            "search_queries": [],
-            "place_types": [],
-            "keywords": [],
-            "preference_signals": {},
-        }
-
-        # Merge all results
-        for idx, result in enumerate(extraction_results):
-            label = task_labels[idx]
-            extracted_from_other["search_queries"].extend(result["search_queries"])
-            extracted_from_other["place_types"].extend(result["place_types"])
-            extracted_from_other["keywords"].extend(result["keywords"])
-
-            # Merge preference signals
-            for key, value in result["preference_signals"].items():
-                if key not in extracted_from_other["preference_signals"]:
-                    extracted_from_other["preference_signals"][key] = []
-                existing = extracted_from_other["preference_signals"][key]
-                if isinstance(existing, str):
-                    extracted_from_other["preference_signals"][key] = [existing]
-                if isinstance(value, list):
-                    extracted_from_other["preference_signals"][key].extend(value)
-                else:
-                    extracted_from_other["preference_signals"][key].append(value)
-
-        print(
-            f"[PreferenceExtractor] Extracted {len(result['search_queries'])} search queries from {label}"
-        )
-    else:
-        # No extractions needed
-        extracted_from_other = {
-            "search_queries": [],
-            "place_types": [],
-            "keywords": [],
-            "preference_signals": {},
-        }
-
-    # Combine all extracted keywords for scoring
-    all_extracted_keywords = extracted_from_other["keywords"]
-
-    # Estimate activities per day
-    daily_plan = calculate_daily_activities(pace_style, schedule_style, len(day_list))
-    total_needed = 0
-    for d in daily_plan:
-        total_needed += (d["min_activities"] + d["max_activities"]) // 2
-
-    # =========================================================================
-    # OPTIMIZATION: Pre-compute Pass B category embeddings in parallel
-    # This way they're ready if Pass B runs, saving ~0.2-0.3 seconds
-    # =========================================================================
-    async def precompute_pass_b_categories():
-        """Pre-compute category embeddings for Pass B (runs in parallel with Pass A)."""
-        try:
-            from app.core.semantic_category_service import semantic_category_service
-
-            # Build preference text (same logic as Pass B)
-            preference_parts = []
-            if interests:
-                preference_parts.append(f"Interests: {', '.join(interests)}")
-            if extracted_from_other["search_queries"]:
-                preference_parts.append(" ".join(extracted_from_other["search_queries"]))
+preference_parts.append(" ".join(extracted_from_other["search_queries"]))
             if vibe_notes:
                 preference_parts.append(vibe_notes)
             if trip_type == "group" and payload.notes:
@@ -826,7 +767,7 @@ async def generate_itinerary_v2(
             )
 
             # Get destination profile (fast, cached)
-            destination_profile = destination_profiling_service.get_destination_profile(destination)
+destination_profile = destination_profiling_service.get_destination_profile(destination)
 
             # Compute embeddings (wrap blocking call)
             def _find_categories():
@@ -883,7 +824,7 @@ async def generate_itinerary_v2(
         if destination_place_id:
             # Use Place Details API to get exact coordinates
             def _get_details():
-                return places_service.get_place_details(destination_place_id, fields="geometry")
+return places_service.get_place_details(destination_place_id, fields="geometry")
 
             try:
                 place_details = await asyncio.to_thread(_get_details)
@@ -945,7 +886,7 @@ async def generate_itinerary_v2(
     destination_lat = destination_coords[0] if destination_coords else None
     destination_lng = destination_coords[1] if destination_coords else None
     if destination_coords:
-        print(f"[Coords] Cached destination coordinates: ({destination_lat}, {destination_lng})")
+print(f"[Coords] Cached destination coordinates: ({destination_lat}, {destination_lng})")
 
     # --- ADAPTIVE CANDIDATE POOL ---
     # Bigger pool for longer trips, scaled by pace
@@ -993,7 +934,9 @@ async def generate_itinerary_v2(
     )
 
     # --- PASS A: STRICT SEARCH (interests + extracted queries + photos) ---
-    print("[Pass A] Searching with interests + extracted queries + photo requirement...")
+    print(
+        "[Pass A] Searching with interests + extracted queries + photo requirement..."
+    )
 
     # Merge interests with extracted search queries
     all_search_queries = interests.copy()
@@ -1122,7 +1065,7 @@ async def generate_itinerary_v2(
 
     # Run all queries in parallel
     print(f"[Pass A] Running {len(pass_a_queries)} queries in parallel...")
-    query_results = await asyncio.gather(*[search_single_query(q) for q in pass_a_queries])
+query_results = await asyncio.gather(*[search_single_query(q) for q in pass_a_queries])
 
     # Deduplicate results
     seen_place_ids = set()
@@ -1201,7 +1144,7 @@ async def generate_itinerary_v2(
         top_categories = await pass_b_categories_task
         if top_categories is None:
             # Fallback: compute now (shouldn't happen, but safety)
-            destination_profile = destination_profiling_service.get_destination_profile(destination)
+destination_profile = destination_profiling_service.get_destination_profile(destination)
             try:
                 top_categories = semantic_category_service.find_relevant_categories(
                     user_preference_text=user_preference,
@@ -1221,7 +1164,7 @@ async def generate_itinerary_v2(
         targeted_search_types = [cat for cat, _ in top_categories]
         # Use same multiplier logic as above
         pass_b_multiplier = 4 if num_days >= 7 else 3.5 if num_days >= 5 else 3
-        pass_b_max = min(max_results - pass_a_count, int(total_needed * pass_b_multiplier))
+pass_b_max = min(max_results - pass_a_count, int(total_needed * pass_b_multiplier))
 
         # Parallelize category searches
         async def search_category(category: str) -> list[dict[str, Any]]:
@@ -1243,7 +1186,7 @@ async def generate_itinerary_v2(
             return await asyncio.to_thread(_search)
 
         # Run all category searches in parallel
-        print(f"[Pass B] Running {len(targeted_search_types)} category searches in parallel...")
+print(f"[Pass B] Running {len(targeted_search_types)} category searches in parallel...")
         category_results = await asyncio.gather(
             *[search_category(cat) for cat in targeted_search_types]
         )
@@ -1341,7 +1284,9 @@ async def generate_itinerary_v2(
         # Check 3: Distance validation (if coordinates available)
         distance_valid = True
         if destination_lat and destination_lng and venue_lat and venue_lng:
-            distance = haversine_distance(destination_lat, destination_lng, venue_lat, venue_lng)
+            distance = haversine_distance(
+                destination_lat, destination_lng, venue_lat, venue_lng
+            )
             if distance > max_distance_km:
                 distance_valid = False
 
@@ -1512,7 +1457,7 @@ async def generate_itinerary_v2(
 
         # Boost from extracted keywords (using pre-computed lowercased keywords)
         if extracted_keywords_lower:
-            keyword_matches = sum(1 for kw in extracted_keywords_lower if kw in venue_text)
+keyword_matches = sum(1 for kw in extracted_keywords_lower if kw in venue_text)
             keyword_score = min(0.3, keyword_matches / len(extracted_keywords_lower) * 0.3)
             score += keyword_score
 
@@ -1582,7 +1527,9 @@ async def generate_itinerary_v2(
             )
             print("[InterestMatch] Batch semantic matching completed")
         else:
-            print("[InterestMatch] Semantic matching not available, using keyword matching only")
+            print(
+                "[InterestMatch] Semantic matching not available, using keyword matching only"
+            )
     except Exception as e:
         print(f"[InterestMatch] Semantic matching failed: {e}")
         print("[InterestMatch] Falling back to keyword matching only")
@@ -1644,7 +1591,9 @@ async def generate_itinerary_v2(
 
     # Second pass: relax diversity cap if we're short
     if len(chosen) < total_needed:
-        print(f"[Diversity] Relaxing cap to fill remaining slots ({len(chosen)}/{total_needed})")
+        print(
+            f"[Diversity] Relaxing cap to fill remaining slots ({len(chosen)}/{total_needed})"
+        )
         relaxed_cap = diversity_cap + 2  # Allow +2 more per type
         for item in scored:
             v = item["venue"]
@@ -1689,7 +1638,7 @@ async def generate_itinerary_v2(
         place_id = v.get("place_id")
         if place_id and v.get("photo_reference"):
             photo_urls[place_id] = (
-                places_service.get_proxy_photo_url(v["photo_reference"], base_url) or None
+places_service.get_proxy_photo_url(v["photo_reference"], base_url) or None
             )
 
     # Fetch opening hours for chosen venues (parallelize to avoid blocking)
@@ -1706,7 +1655,7 @@ async def generate_itinerary_v2(
         return (place_id, details)
 
     # Fetch all place details in parallel
-    place_detail_tasks = [fetch_place_details(v["place_id"]) for v in chosen if v.get("place_id")]
+place_detail_tasks = [fetch_place_details(v["place_id"]) for v in chosen if v.get("place_id")]
     place_details_results = await asyncio.gather(*place_detail_tasks)
 
     # Map results back to venues
@@ -1826,7 +1775,7 @@ async def generate_itinerary_v2(
         settings = get_settings()
         provider = LLMProvider(model=settings.aisuite_model)
 
-        async def generate_day_timing(day_idx: int, day: Day) -> tuple[int, list[str] | None]:
+async def generate_day_timing(day_idx: int, day: Day) -> tuple[int, list[str] | None]:
             """Generate timing for a single day using async LLM call."""
             if not day.activities:
                 return (day_idx, None)
@@ -1855,13 +1804,13 @@ async def generate_itinerary_v2(
                         venue_distance_to_next = act.distance_to_next
 
                 # Build context string with opening hours
-                context_str = (
-                    f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
-                )
+                context_str = f"{idx+1}. {act.title} ({venue_type}) at {act.location or destination}"
 
                 if venue_hours:
                     # Extract hours for the current day
-                    day_name = day.date.split(",")[0]  # e.g., "Monday" from "Monday, January 1"
+                    day_name = day.date.split(",")[
+                        0
+                    ]  # e.g., "Monday" from "Monday, January 1"
                     relevant_hours = [h for h in venue_hours if day_name in h]
                     if relevant_hours:
                         context_str += f" | Hours: {relevant_hours[0]}"
@@ -1870,9 +1819,7 @@ async def generate_itinerary_v2(
                     from app.core.travel_time_utils import estimate_travel_time
 
                     travel_mins = estimate_travel_time(venue_distance_to_next)
-                    context_str += (
-                        f" | {venue_distance_to_next}km to next ({travel_mins}min travel)"
-                    )
+                    context_str += f" | {venue_distance_to_next}km to next ({travel_mins}min travel)"
 
                 activity_context.append(context_str)
 
@@ -1910,7 +1857,8 @@ async def generate_itinerary_v2(
 
             timing_user = {
                 "role": "user",
-                "content": f"Day {day_idx+1} activities:\n" + "\n".join(activity_context),
+                "content": f"Day {day_idx+1} activities:\n"
+                + "\n".join(activity_context),
             }
 
             # Use async LLM call
@@ -1919,7 +1867,7 @@ async def generate_itinerary_v2(
             )
 
             # Parse timing response
-            print(f"[Timing Debug] Raw LLM response for Day {day_idx+1}: {timing_response[:300]}")
+print(f"[Timing Debug] Raw LLM response for Day {day_idx+1}: {timing_response[:300]}")
 
             timing_text = timing_response.strip()
 
@@ -1930,7 +1878,9 @@ async def generate_itinerary_v2(
             # Remove markdown code fences
             if timing_text.startswith("```"):
                 lines = timing_text.split("\n")
-                timing_text = "\n".join([line for line in lines if not line.startswith("```")])
+                timing_text = "\n".join(
+                    [line for line in lines if not line.startswith("```")]
+                )
 
             # Try to extract JSON array from text
             # Look for [...] pattern
@@ -1946,7 +1896,7 @@ async def generate_itinerary_v2(
             # LLM might return Python list with single quotes - convert to JSON
             timing_text = timing_text.replace("'", '"')
 
-            print(f"[Timing Debug] Extracted JSON for Day {day_idx+1}: {timing_text[:200]}")
+print(f"[Timing Debug] Extracted JSON for Day {day_idx+1}: {timing_text[:200]}")
             # Parse JSON (json is imported at top level)
             try:
                 times = json.loads(timing_text)
@@ -1966,7 +1916,7 @@ async def generate_itinerary_v2(
 
         # Run all day timings in parallel, and also start trip notes generation
         timing_tasks = [
-            generate_day_timing(day_idx, day) for day_idx, day in enumerate(days) if day.activities
+generate_day_timing(day_idx, day) for day_idx, day in enumerate(days) if day.activities
         ]
 
         # Wait for all timing calls to complete
@@ -2014,7 +1964,7 @@ async def generate_itinerary_v2(
                                     time_str = adjusted_time
                             else:
                                 # No opening hours data - use type-based defaults
-                                default_hours = get_default_hours_by_type(v.get("types", []))
+default_hours = get_default_hours_by_type(v.get("types", []))
                                 is_open, reason = is_venue_open_at_time(
                                     default_hours, day_name, time_str
                                 )
@@ -2093,7 +2043,9 @@ async def generate_itinerary_v2(
                                         time_str, parsed_hours, day_name
                                     )
                                 else:
-                                    default_hours = get_default_hours_by_type(v.get("types", []))
+                                    default_hours = get_default_hours_by_type(
+                                        v.get("types", [])
+                                    )
                                     time_str = adjust_time_to_opening_hours(
                                         time_str, default_hours, day_name
                                     )
@@ -2157,7 +2109,9 @@ async def generate_itinerary_v2(
                                     time_str, parsed_hours, day_name
                                 )
                             else:
-                                default_hours = get_default_hours_by_type(v.get("types", []))
+                                default_hours = get_default_hours_by_type(
+                                    v.get("types", [])
+                                )
                                 time_str = adjust_time_to_opening_hours(
                                     time_str, default_hours, day_name
                                 )
@@ -2169,7 +2123,9 @@ async def generate_itinerary_v2(
             _optimize_day_times(day, chosen, opening_hours_cache, pace_style)
 
     # Calculate distances and validate timing with travel time
-    print("[Distance] Calculating distances and validating travel time between activities...")
+    print(
+        "[Distance] Calculating distances and validating travel time between activities..."
+    )
     from app.core.travel_time_utils import (
         add_minutes_to_time,
         estimate_activity_duration,
@@ -2212,7 +2168,9 @@ async def generate_itinerary_v2(
 
                 # Validate timing: check if there's enough time between activities
                 travel_mins = estimate_travel_time(distance_km)
-                activity_duration = estimate_activity_duration(current_venue_types, pace_style)
+                activity_duration = estimate_activity_duration(
+                    current_venue_types, pace_style
+                )
 
                 # Calculate expected end time of current activity
                 expected_next_start = add_minutes_to_time(
@@ -2273,7 +2231,9 @@ async def generate_itinerary_v2(
                         fn = p.get("first_name") or ""
                         ln = p.get("last_name") or ""
                         if fn or ln:
-                            group_participants.append(GroupParticipant(first_name=fn, last_name=ln))
+                            group_participants.append(
+                                GroupParticipant(first_name=fn, last_name=ln)
+                            )
                     doc.group = GroupInfo(
                         invite_id=invite_id,
                         participants=group_participants,
@@ -2291,7 +2251,9 @@ async def generate_itinerary_v2(
                     fn = p.first_name.strip()
                     ln = p.last_name.strip()
                     if fn or ln:
-                        group_participants.append(GroupParticipant(first_name=fn, last_name=ln))
+                        group_participants.append(
+                            GroupParticipant(first_name=fn, last_name=ln)
+                        )
                 if group_participants:
                     doc.group = GroupInfo(
                         invite_id=None,
@@ -2328,7 +2290,9 @@ async def generate_itinerary_v2(
             result["warnings"] = warnings
         return result
 
-    itn_id = repo.save_itinerary(doc, clerk_user_id=clerk_user_id, fingerprint=fingerprint)
+    itn_id = repo.save_itinerary(
+        doc, clerk_user_id=clerk_user_id, fingerprint=fingerprint
+    )
 
     # Check if this is the user's first itinerary and send email
     try:
@@ -2358,7 +2322,9 @@ async def generate_itinerary_v2(
                 trip_dates = doc.dates
 
                 # Extract first name
-                first_name = user.first_name or user.email.split("@")[0].split(".")[0].title()
+                first_name = (
+                    user.first_name or user.email.split("@")[0].split(".")[0].title()
+                )
 
                 # Send email
                 email_service.send_first_itinerary_email(
@@ -2399,7 +2365,9 @@ async def generate_itinerary_v2(
 
             success = await asyncio.to_thread(_update_invite_id)
             if not success:
-                print(f"Warning: Failed to update invite {invite_id} with itinerary_id {itn_id}")
+                print(
+                    f"Warning: Failed to update invite {invite_id} with itinerary_id {itn_id}"
+                )
 
             # Send emails to all invitees with emails
             try:
@@ -2413,14 +2381,17 @@ async def generate_itinerary_v2(
 
                     # Get user for organizer name (already fetched above for first itinerary email)
                     def _find_user_again():
-                        return repo.users_collection.find_one({"clerk_user_id": clerk_user_id})
+return repo.users_collection.find_one({"clerk_user_id": clerk_user_id})
 
                     user_doc = await asyncio.to_thread(_find_user_again)
                     organizer_name = "Trip Organizer"
                     if user_doc:
                         organizer_name = (
                             f"{user_doc.get('first_name', '')} {user_doc.get('last_name', '')}".strip()
-                            or user_doc.get("email", "").split("@")[0].split(".")[0].title()
+                            or user_doc.get("email", "")
+                            .split("@")[0]
+                            .split(".")[0]
+                            .title()
                             or "Trip Organizer"
                         )
 
@@ -2433,7 +2404,9 @@ async def generate_itinerary_v2(
 
                     # Send to all participants with emails (excluding organizer)
                     for participant in participants:
-                        if participant.get("email") and not participant.get("is_organizer"):
+                        if participant.get("email") and not participant.get(
+                            "is_organizer"
+                        ):
                             recipient_email = participant["email"]
                             recipient_first_name = (
                                 participant.get("first_name")
@@ -2450,7 +2423,9 @@ async def generate_itinerary_v2(
                                 group_size=group_size,
                                 itinerary_link=itinerary_link,
                             )
-                            print(f"[Email] Sent itinerary ready email to {recipient_email}")
+                            print(
+                                f"[Email] Sent itinerary ready email to {recipient_email}"
+                            )
             except Exception as e:
                 print(f"[Email] Error sending itinerary ready emails: {e}")
                 # Non-fatal: continue even if emails fail
@@ -2523,7 +2498,9 @@ async def delete_itinerary(
 ):
     """Delete an itinerary by ID and cascade delete linked invites."""
     # Find all invites linked to this itinerary
-    linked_invites = list(repo.trip_invites_collection.find({"itinerary_id": itinerary_id}))
+    linked_invites = list(
+        repo.trip_invites_collection.find({"itinerary_id": itinerary_id})
+    )
 
     # Delete all linked invites
     if linked_invites:
@@ -2557,17 +2534,23 @@ async def get_itinerary_invite(
 
     # Verify ownership
     if itinerary.get("clerk_user_id") != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the itinerary owner can access this")
+        raise HTTPException(
+            status_code=403, detail="Only the itinerary owner can access this"
+        )
 
     # Find invite linked to this itinerary
     invite = repo.trip_invites_collection.find_one({"itinerary_id": itinerary_id})
     if not invite:
-        raise HTTPException(status_code=404, detail="No invite found for this itinerary")
+        raise HTTPException(
+            status_code=404, detail="No invite found for this itinerary"
+        )
 
     invite.pop("_id", None)  # Remove MongoDB ObjectId
 
     # Filter out organizer from participants
-    participants = [p for p in invite.get("participants", []) if not p.get("is_organizer")]
+    participants = [
+        p for p in invite.get("participants", []) if not p.get("is_organizer")
+    ]
 
     # Return all non-organizer participants (with or without emails)
     invite["participants"] = participants
@@ -2679,7 +2662,9 @@ async def share_itinerary(
 
     # Verify ownership
     if itinerary.get("clerk_user_id") != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the itinerary owner can share it")
+        raise HTTPException(
+            status_code=403, detail="Only the itinerary owner can share it"
+        )
 
     # Get user info
     user = await repo.get_user_by_clerk_id(clerk_user_id)
@@ -2728,7 +2713,9 @@ async def share_itinerary(
 
         # Update existing invite with new participants
         participant_emails = share_data.participants
-        organizer_name = share_data.get("organizer_name", user.first_name or "Trip Organizer")
+        organizer_name = share_data.get(
+            "organizer_name", user.first_name or "Trip Organizer"
+        )
 
         # Update participants in the invite
         participants = existing_invite.get("participants", [])
@@ -2746,8 +2733,16 @@ async def share_itinerary(
                 repo.add_participant(
                     invite_id=invite_id,
                     email=email,
-                    first_name=(participant_info.get("first_name", "") if participant_info else ""),
-                    last_name=(participant_info.get("last_name", "") if participant_info else ""),
+                    first_name=(
+                        participant_info.get("first_name", "")
+                        if participant_info
+                        else ""
+                    ),
+                    last_name=(
+                        participant_info.get("last_name", "")
+                        if participant_info
+                        else ""
+                    ),
                 )
 
         # Send emails to selected participants
@@ -2759,7 +2754,11 @@ async def share_itinerary(
                 # Find participant to get first_name
                 updated_invite = repo.get_trip_invite(invite_id)
                 participant = next(
-                    (p for p in updated_invite.get("participants", []) if p.get("email") == email),
+                    (
+                        p
+                        for p in updated_invite.get("participants", [])
+                        if p.get("email") == email
+                    ),
                     None,
                 )
                 recipient_first_name = (
@@ -2771,7 +2770,9 @@ async def share_itinerary(
                     invite_id=invite_id,
                     organizer_name=organizer_name,
                     trip_name=trip_name,
-                    recipient_first_name=(recipient_first_name if recipient_first_name else None),
+                    recipient_first_name=(
+                        recipient_first_name if recipient_first_name else None
+                    ),
                 )
                 sent_count += 1
             except Exception as e:
@@ -2794,7 +2795,8 @@ async def share_itinerary(
         invite_doc = repo.create_trip_invite(
             organizer_clerk_id=clerk_user_id,
             organizer_email=user.email,
-            organizer_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or None,
+            organizer_name=f"{user.first_name or ''} {user.last_name or ''}".strip()
+            or None,
             trip_name=trip_name,
             destination=destination,
             date_range_start=date_range_start,
@@ -2813,7 +2815,9 @@ async def share_itinerary(
 
         # Add participants
         participant_emails = share_data.participants
-        organizer_name = share_data.get("organizer_name", user.first_name or "Trip Organizer")
+        organizer_name = share_data.get(
+            "organizer_name", user.first_name or "Trip Organizer"
+        )
 
         group_participants = document.get("group", {}).get("participants", [])
         for email in participant_emails:
@@ -2824,8 +2828,12 @@ async def share_itinerary(
             repo.add_participant(
                 invite_id=invite_id,
                 email=email,
-                first_name=(participant_info.get("first_name", "") if participant_info else ""),
-                last_name=(participant_info.get("last_name", "") if participant_info else ""),
+                first_name=(
+                    participant_info.get("first_name", "") if participant_info else ""
+                ),
+                last_name=(
+                    participant_info.get("last_name", "") if participant_info else ""
+                ),
             )
 
         # Send emails
@@ -2852,7 +2860,9 @@ async def share_itinerary(
                     invite_id=invite_id,
                     organizer_name=organizer_name,
                     trip_name=trip_name,
-                    recipient_first_name=(recipient_first_name if recipient_first_name else None),
+                    recipient_first_name=(
+                        recipient_first_name if recipient_first_name else None
+                    ),
                 )
                 sent_count += 1
             except Exception as e:

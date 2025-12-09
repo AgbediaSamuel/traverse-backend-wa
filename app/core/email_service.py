@@ -18,7 +18,9 @@ resend.api_key = os.getenv("RESEND_API_KEY", "")
 class EmailService:
     """Service for sending emails via Resend."""
 
-    def __init__(self, api_key: Optional[str] = None, sender_email: Optional[str] = None):
+    def __init__(
+        self, api_key: Optional[str] = None, sender_email: Optional[str] = None
+    ):
         """
         Initialize email service with optional API key override.
 
@@ -81,7 +83,8 @@ class EmailService:
                 "from": "Traverse <app@traverse-hq.com>",
                 "to": [recipient_email],
                 "subject": (
-                    f"{organizer_name} invited you to plan your next trip " "on Traverse ✈️"
+                    f"{organizer_name} invited you to plan your next trip "
+                    "on Traverse ✈️"
                 ),
                 "html": html_content,
             }
@@ -188,7 +191,9 @@ class EmailService:
         """Build the HTML content for the trip invite email."""
 
         # Extract first name from recipient_name (fallback to full name if parsing fails)
-        first_name = recipient_name.split()[0] if recipient_name.split() else recipient_name
+        first_name = (
+            recipient_name.split()[0] if recipient_name.split() else recipient_name
+        )
 
         # Inline SVG arrow icon (Lucide-style) - two versions for different contexts
         arrow_icon_inline = """
@@ -348,7 +353,9 @@ class EmailService:
             return True
 
         except Exception as e:
-            logger.error(f"Error sending first itinerary email to {recipient_email}: {e}")
+            logger.error(
+                f"Error sending first itinerary email to {recipient_email}: {e}"
+            )
             return False
 
     def send_all_participants_responded_email(
@@ -431,7 +438,9 @@ class EmailService:
             }
 
             response = resend.Emails.send(params)
-            logger.info(f"Sent all participants responded email to {organizer_email}: {response}")
+            logger.info(
+                f"Sent all participants responded email to {organizer_email}: {response}"
+            )
             return True
 
         except Exception as e:
@@ -521,7 +530,9 @@ class EmailService:
             return True
 
         except Exception as e:
-            logger.error(f"Error sending itinerary ready email to {recipient_email}: {e}")
+            logger.error(
+                f"Error sending itinerary ready email to {recipient_email}: {e}"
+            )
             return False
 
 

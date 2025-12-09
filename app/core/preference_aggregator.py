@@ -32,13 +32,19 @@ def aggregate_preferences(preferences_list: list[dict[str, Any]]) -> dict[str, A
 
     # Aggregate numeric values (use median for better balance)
     budget_values = [
-        p.get("budget_style", 50) for p in preferences_list if p.get("budget_style") is not None
+        p.get("budget_style", 50)
+        for p in preferences_list
+        if p.get("budget_style") is not None
     ]
     pace_values = [
-        p.get("pace_style", 50) for p in preferences_list if p.get("pace_style") is not None
+        p.get("pace_style", 50)
+        for p in preferences_list
+        if p.get("pace_style") is not None
     ]
     schedule_values = [
-        p.get("schedule_style", 50) for p in preferences_list if p.get("schedule_style") is not None
+        p.get("schedule_style", 50)
+        for p in preferences_list
+        if p.get("schedule_style") is not None
     ]
 
     aggregated_budget = int(median(budget_values)) if budget_values else 50

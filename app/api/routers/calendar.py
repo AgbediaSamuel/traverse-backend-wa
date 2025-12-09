@@ -1,8 +1,6 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
-
 from app.core.clerk_security import get_current_user_from_clerk
 from app.core.cover_image_service import cover_image_service
 from app.core.repository import repo
@@ -19,6 +17,7 @@ from app.core.schemas import (
     UpdateParticipantPreferencesRequest,
     User,
 )
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,9 @@ async def create_trip_invite(
     if invite_data.destination:
         try:
             if cover_image_service:
-                cover_image_url = cover_image_service.get_cover_image(invite_data.destination, repo)
+                cover_image_url = cover_image_service.get_cover_image(
+                    invite_data.destination, repo
+                )
         except Exception as e:
             logger.debug(f"Failed to fetch cover image for invite: {e}")
             # Non-fatal: continue without cover image
@@ -135,7 +136,9 @@ async def get_trip_invite(
         raise HTTPException(status_code=404, detail="User not found")
 
     is_organizer = invite["organizer_clerk_id"] == clerk_user_id
-    is_participant = any(p["email"] == user.email for p in invite.get("participants", []))
+    is_participant = any(
+        p["email"] == user.email for p in invite.get("participants", [])
+    )
 
     if not (is_organizer or is_participant):
         raise HTTPException(status_code=403, detail="Access denied")
@@ -163,7 +166,9 @@ async def delete_trip_invite(
         raise HTTPException(status_code=404, detail="Trip invite not found")
 
     if invite["organizer_clerk_id"] != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can delete this invite")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can delete this invite"
+        )
 
     success = repo.delete_trip_invite(invite_id)
 
@@ -194,7 +199,9 @@ async def add_participant(
         raise HTTPException(status_code=404, detail="Trip invite not found")
 
     if invite["organizer_clerk_id"] != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can add participants")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can add participants"
+        )
 
     # Check if invites have been sent
     if invite["status"] != "draft":
@@ -227,7 +234,9 @@ async def add_participant(
     return TripInviteResponse(**updated_invite)
 
 
-@router.put("/invites/{invite_id}/participants/{email}", response_model=TripInviteResponse)
+@router.put(
+    "/invites/{invite_id}/participants/{email}", response_model=TripInviteResponse
+)
 async def update_participant(
     invite_id: str = Path(
         ...,
@@ -249,7 +258,9 @@ async def update_participant(
         raise HTTPException(status_code=404, detail="Trip invite not found")
 
     if invite["organizer_clerk_id"] != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can update participants")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can update participants"
+        )
 
     # Check if invites have been sent
     if invite["status"] != "draft":
@@ -274,7 +285,9 @@ async def update_participant(
     return TripInviteResponse(**updated_invite)
 
 
-@router.delete("/invites/{invite_id}/participants/{email}", response_model=TripInviteResponse)
+@router.delete(
+    "/invites/{invite_id}/participants/{email}", response_model=TripInviteResponse
+)
 async def remove_participant(
     invite_id: str = Path(
         ...,
@@ -295,7 +308,9 @@ async def remove_participant(
         raise HTTPException(status_code=404, detail="Trip invite not found")
 
     if invite["organizer_clerk_id"] != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can remove participants")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can remove participants"
+        )
 
     # Check if invites have been sent
     if invite["status"] != "draft":
@@ -335,7 +350,9 @@ async def send_invites(
         raise HTTPException(status_code=404, detail="Trip invite not found")
 
     if invite["organizer_clerk_id"] != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can send invites")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can send invites"
+        )
 
     # Check if already sent
     if invite["status"] != "draft":
@@ -343,7 +360,9 @@ async def send_invites(
 
     # Check if there are participants
     if not invite.get("participants"):
-        raise HTTPException(status_code=400, detail="No participants to send invites to")
+        raise HTTPException(
+            status_code=400, detail="No participants to send invites to"
+        )
 
     # Mark invites as sent
     success = repo.mark_invites_sent(invite_id)
@@ -382,7 +401,9 @@ async def send_invites(
                 destination=destination,
                 date_range_start=date_range_start,
                 date_range_end=date_range_end,
-                recipient_first_name=(recipient_first_name if recipient_first_name else None),
+                recipient_first_name=(
+                    recipient_first_name if recipient_first_name else None
+                ),
             )
             sent_count += 1
         except Exception as e:
@@ -429,7 +450,9 @@ async def respond_to_invite(
     # Verify user is a participant
     participant_emails = [p["email"] for p in invite.get("participants", [])]
     if user.email not in participant_emails:
-        raise HTTPException(status_code=403, detail="You are not a participant in this trip")
+        raise HTTPException(
+            status_code=403, detail="You are not a participant in this trip"
+        )
 
     # Submit response
     success = repo.submit_participant_response(
@@ -458,7 +481,9 @@ async def respond_to_invite(
 
         # Check if all participants have responded
         # Filter out organizer and check if all non-organizer participants have responded
-        non_organizer_participants = [p for p in participants if not p.get("is_organizer", False)]
+        non_organizer_participants = [
+            p for p in participants if not p.get("is_organizer", False)
+        ]
         all_responded = len(non_organizer_participants) > 0 and all(
             p.get("status") == "responded" for p in non_organizer_participants
         )
@@ -478,7 +503,8 @@ async def respond_to_invite(
 
                     # Extract first name
                     organizer_first_name = (
-                        organizer.first_name or organizer.email.split("@")[0].split(".")[0].title()
+                        organizer.first_name
+                        or organizer.email.split("@")[0].split(".")[0].title()
                     )
 
                     # Count group size (all participants including organizer)
@@ -487,7 +513,9 @@ async def respond_to_invite(
                     email_service.send_all_participants_responded_email(
                         organizer_email=organizer.email,
                         organizer_first_name=organizer_first_name,
-                        destination=updated_invite.get("destination", "your destination"),
+                        destination=updated_invite.get(
+                            "destination", "your destination"
+                        ),
                         trip_name=updated_invite.get("trip_name", "Group Trip"),
                         group_size=group_size,
                         generate_link=generate_link,
@@ -496,7 +524,9 @@ async def respond_to_invite(
                         f"[Email] Sent all participants responded email to organizer {organizer.email}"
                     )
             except Exception as e:
-                logger.error(f"[Email] Error sending all participants responded email: {e}")
+                logger.error(
+                    f"[Email] Error sending all participants responded email: {e}"
+                )
                 # Non-fatal: continue even if email fails
 
     return {
@@ -532,7 +562,9 @@ async def mark_preferences_completed(
     # Verify user is a participant
     participant_emails = [p["email"] for p in invite.get("participants", [])]
     if user.email not in participant_emails:
-        raise HTTPException(status_code=403, detail="You are not a participant in this trip")
+        raise HTTPException(
+            status_code=403, detail="You are not a participant in this trip"
+        )
 
     # Mark preferences as completed
     success = repo.mark_participant_preferences_completed(
@@ -541,7 +573,9 @@ async def mark_preferences_completed(
     )
 
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to mark preferences as completed")
+        raise HTTPException(
+            status_code=500, detail="Failed to mark preferences as completed"
+        )
 
     return {
         "message": "Preferences marked as completed",
@@ -571,7 +605,9 @@ async def finalize_invite_dates(
 
     # Verify user is the organizer
     if invite.get("organizer_clerk_id") != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can finalize dates")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can finalize dates"
+        )
 
     participants = invite.get("participants", [])
     organizer_participant = next(
@@ -682,7 +718,9 @@ async def resend_invites(
 
     # Verify user is the organizer
     if invite.get("organizer_clerk_id") != clerk_user_id:
-        raise HTTPException(status_code=403, detail="Only the organizer can resend invites")
+        raise HTTPException(
+            status_code=403, detail="Only the organizer can resend invites"
+        )
 
     # Verify all emails are participants (not organizer)
     participant_emails = [
@@ -694,7 +732,9 @@ async def resend_invites(
 
     for email in request_data.participant_emails:
         if email not in participant_emails:
-            raise HTTPException(status_code=400, detail=f"Email {email} is not a valid participant")
+            raise HTTPException(
+                status_code=400, detail=f"Email {email} is not a valid participant"
+            )
 
     # Reset participants
     success = repo.reset_participants_for_resend(
@@ -728,7 +768,9 @@ async def resend_invites(
                 invite_id=invite_id,
                 organizer_name=organizer_name,
                 trip_name=trip_name,
-                recipient_first_name=(recipient_first_name if recipient_first_name else None),
+                recipient_first_name=(
+                    recipient_first_name if recipient_first_name else None
+                ),
             )
             sent_count += 1
         except Exception as e:
@@ -790,7 +832,9 @@ async def reject_invite(
     user_email = reject_data.email or user.email
 
     if user_email not in participant_emails:
-        raise HTTPException(status_code=403, detail="You are not a participant in this trip")
+        raise HTTPException(
+            status_code=403, detail="You are not a participant in this trip"
+        )
 
     # Update participant status to declined
     participants = invite.get("participants", [])
@@ -870,7 +914,9 @@ async def update_participant_preferences_setting(
     )
 
     if result.modified_count == 0:
-        raise HTTPException(status_code=500, detail="Failed to update preference setting")
+        raise HTTPException(
+            status_code=500, detail="Failed to update preference setting"
+        )
 
     updated_invite = repo.get_trip_invite(invite_id)
     return TripInviteResponse(**updated_invite)
