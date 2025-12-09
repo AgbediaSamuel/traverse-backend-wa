@@ -52,7 +52,9 @@ class LLMProvider:
             )
             return resp.choices[0].message.content
 
-    async def chat_async(self, messages: list[dict[str, Any]], temperature: float = 1.0) -> str:
+    async def chat_async(
+        self, messages: list[dict[str, Any]], temperature: float = 1.0
+    ) -> str:
         """Async version of chat completion request. Runs sync operations in executor for parallelization."""
         import asyncio
 
