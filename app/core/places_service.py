@@ -129,10 +129,16 @@ class PlacesService:
                 # Use Place Details API to get coordinates (more reliable)
                 try:
                     place_details = self.get_place_details(place_id)
-                    if place_details and place_details.get("lat") and place_details.get("lng"):
+                    if (
+                        place_details
+                        and place_details.get("lat")
+                        and place_details.get("lng")
+                    ):
                         lat = place_details["lat"]
                         lng = place_details["lng"]
-                        print(f"[search_places] Using place_id {place_id} → ({lat}, {lng})")
+                        print(
+                            f"[search_places] Using place_id {place_id} → ({lat}, {lng})"
+                        )
                     else:
                         print(
                             f"[search_places] Failed to get coordinates from place_id, falling back to geocoding"
@@ -280,7 +286,9 @@ class PlacesService:
             print(f"Error searching places: {e}")
             return []
 
-    def get_place_details(self, place_id: str, fields: str | None = None) -> dict[str, Any] | None:
+    def get_place_details(
+        self, place_id: str, fields: str | None = None
+    ) -> dict[str, Any] | None:
         """
         Get detailed information about a specific place.
 
